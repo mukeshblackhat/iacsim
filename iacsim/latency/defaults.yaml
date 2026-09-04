@@ -1,0 +1,65 @@
+# Built-in latency numbers. Approximate public figures — good for *comparing*
+# designs, not for predicting absolute numbers. Override any key with
+# --profile my.yaml; the same schema is written by `iacsim calibrate`.
+#
+# All values in milliseconds.
+
+meta:
+  source: defaults
+  version: 1
+
+distance:
+  same_az: 0.3
+  cross_az: 1.0
+  cross_region_default: 120       # fallback when a pair is missing below
+  cross_region:                   # one-way, ms; keys are sorted "a/b"
+    ap-south-1/us-east-1: 190
+    eu-west-1/us-east-1: 75
+    us-east-1/us-west-2: 65
+    ap-south-1/eu-west-1: 120
+    ap-southeast-1/us-east-1: 215
+  internet_to_edge: 20            # user → first AWS hop
+
+processing:
+  lambda:
+    defaults: { warm: 5, cold: 400, cold_prob: 0.05 }
+    per_resource: {}
+  ec2:
+    defaults: { handle: 3 }
+    per_resource: {}
+  fargate:
+    defaults: { handle: 3 }
+    per_resource: {}
+  dynamodb:
+    defaults: { read: 4, write: 8 }
+    per_resource: {}
+  rds:
+    defaults: { read: 5, write: 10 }
+    per_resource: {}
+  elasticache:
+    defaults: { read: 0.5, write: 0.5 }
+    per_resource: {}
+  s3:
+    defaults: { read: 20, write: 30 }
+    per_resource: {}
+  alb:
+    defaults: { route: 2 }
+    per_resource: {}
+  api_gateway:
+    defaults: { route: 10 }
+    per_resource: {}
+  api_gateway_v2:
+    defaults: { route: 5 }
+    per_resource: {}
+  cloudfront:
+    defaults: { hit: 10, miss: 40 }
+    per_resource: {}
+  sqs:
+    defaults: { publish: 10, consume: 100 }     # consume = typical poll delay
+    per_resource: {}
+  sns:
+    defaults: { publish: 10, consume: 50 }
+    per_resource: {}
+  step_functions:
+    defaults: { transition: 25 }
+    per_resource: {}

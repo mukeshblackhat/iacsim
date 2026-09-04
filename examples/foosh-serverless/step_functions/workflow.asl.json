@@ -1,0 +1,91 @@
+{
+  "Comment": "Foosh dynamic workflow — condensed from step_functions_staging_parallel.json. Same shape: parse, then a Map over nodes (prepare → execute by type → update outputs), then finalize.",
+  "StartAt": "ParseWorkflow",
+  "States": {
+    "ParseWorkflow": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": { "FunctionName": "${parser_arn}", "Payload.$": "$" },
+      "ResultPath": "$.parsed",
+      "Next": "ExtractExecutionOrder"
+    },
+    "ExtractExecutionOrder": {
+      "Type": "Pass",
+      "Parameters": { "nodes.$": "$.parsed.Payload.execution_order", "execution_id.$": "$.execution_id" },
+      "Next": "NodeExecution"
+    },
+    "NodeExecution": {
+      "Type": "Map",
+      "ItemsPath": "$.nodes",
+      "MaxConcurrency": ${max_concurrency},
+      "ResultPath": "$.results",
+      "Next": "FinalizeWorkflow",
+      "ItemProcessor": {
+        "ProcessorConfig": { "Mode": "INLINE" },
+        "StartAt": "PrepareNodeInput",
+        "States": {
+          "PrepareNodeInput": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": { "FunctionName": "${input_preparer_arn}", "Payload.$": "$" },
+            "ResultPath": "$.prepared",
+            "Next": "NodeTypeChoice"
+          },
+          "NodeTypeChoice": {
+            "Type": "Choice",
+            "Choices": [
+              { "Variable": "$.node_type", "StringEquals": "text_input",       "Next": "CompleteInputNode" },
+              { "Variable": "$.node_type", "StringEquals": "image_input",      "Next": "CompleteInputNode" },
+              { "Variable": "$.node_type", "StringEquals": "video_input",      "Next": "CompleteInputNode" },
+              { "Variable": "$.node_type", "StringEquals": "text_iterator",    "Next": "ExecuteTextIterator" },
+              { "Variable": "$.node_type", "StringEquals": "text_enhancement", "Next": "ExecuteTextEnhancement" },
+              { "Variable": "$.node_type", "StringEquals": "image_generation", "Next": "ExecuteImageGeneration" },
+              { "Variable": "$.node_type", "StringEquals": "image_to_image",   "Next": "ExecuteImageToImage" },
+              { "Variable": "$.node_type", "StringEquals": "video_creation",   "Next": "ExecuteVideoCreation" },
+              { "Variable": "$.node_type", "StringEquals": "lipsync",          "Next": "ExecuteLipsync" },
+              { "Variable": "$.node_type", "StringEquals": "router",           "Next": "ExecuteRouter" },
+              { "Variable": "$.node_type", "StringEquals": "html_template",    "Next": "ExecuteHtmlTemplate" }
+            ],
+            "Default": "UnknownNodeType"
+          },
+          "CompleteInputNode": { "Type": "Pass", "End": true },
+          "UnknownNodeType":   { "Type": "Fail", "Error": "UnknownNodeType" },
+
+          "ExecuteTextIterator":    { "Type": "Task", "Resource": "arn:aws:states:::lambda:invoke", "Parameters": { "FunctionName": "${text_iterator_arn}",    "Payload.$": "$" }, "ResultPath": "$.result", "Next": "UpdateOutputs" },
+          "ExecuteTextEnhancement": { "Type": "Task", "Resource": "arn:aws:states:::lambda:invoke", "Parameters": { "FunctionName": "${text_enhancement_arn}", "Payload.$": "$" }, "ResultPath": "$.result", "Next": "UpdateOutputs" },
+          "ExecuteImageGeneration": { "Type": "Task", "Resource": "arn:aws:states:::lambda:invoke", "Parameters": { "FunctionName": "${image_generation_arn}", "Payload.$": "$" }, "ResultPath": "$.result", "Next": "UpdateOutputs" },
+          "ExecuteImageToImage":    { "Type": "Task", "Resource": "arn:aws:states:::lambda:invoke", "Parameters": { "FunctionName": "${image_to_image_arn}",   "Payload.$": "$" }, "ResultPath": "$.result", "Next": "UpdateOutputs" },
+          "ExecuteVideoCreation":   { "Type": "Task", "Resource": "arn:aws:states:::lambda:invoke", "Parameters": { "FunctionName": "${video_creation_arn}",   "Payload.$": "$" }, "ResultPath": "$.result", "Next": "UpdateOutputs" },
+          "ExecuteLipsync":         { "Type": "Task", "Resource": "arn:aws:states:::lambda:invoke", "Parameters": { "FunctionName": "${lipsync_arn}",          "Payload.$": "$" }, "ResultPath": "$.result", "Next": "UpdateOutputs" },
+          "ExecuteRouter":          { "Type": "Task", "Resource": "arn:aws:states:::lambda:invoke", "Parameters": { "FunctionName": "${router_arn}",           "Payload.$": "$" }, "ResultPath": "$.result", "Next": "UpdateOutputs" },
+          "ExecuteHtmlTemplate":    { "Type": "Task", "Resource": "arn:aws:states:::lambda:invoke", "Parameters": { "FunctionName": "${html_template_arn}",    "Payload.$": "$" }, "ResultPath": "$.result", "Next": "UpdateOutputs" },
+
+          "UpdateOutputs": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": { "FunctionName": "${output_updater_arn}", "Payload.$": "$" },
+            "ResultPath": "$.updated",
+            "Next": "ModelDelayChoice"
+          },
+          "ModelDelayChoice": {
+            "Type": "Choice",
+            "Choices": [
+              { "Variable": "$.model", "StringEquals": "kontext-pro", "Next": "DelayKontextPro" },
+              { "Variable": "$.model", "StringEquals": "kontext-max", "Next": "DelayKontextMax" }
+            ],
+            "Default": "CompleteNode"
+          },
+          "DelayKontextPro": { "Type": "Wait", "Seconds": 20, "Next": "CompleteNode" },
+          "DelayKontextMax": { "Type": "Wait", "Seconds": 25, "Next": "CompleteNode" },
+          "CompleteNode":    { "Type": "Pass", "End": true }
+        }
+      }
+    },
+    "FinalizeWorkflow": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": { "FunctionName": "${finalizer_arn}", "Payload.$": "$" },
+      "End": true
+    }
+  }
+}

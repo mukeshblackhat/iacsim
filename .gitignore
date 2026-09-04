@@ -1,0 +1,9 @@
+.venv/
+*.egg-info/
+__pycache__/
+.pytest_cache/
+.iacsim/
+.terraform/
+.terraform.lock.hcl
+*.tfstate*
+.DS_Store

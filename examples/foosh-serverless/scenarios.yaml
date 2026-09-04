@@ -1,0 +1,48 @@
+# Request paths for foosh-serverless.
+#
+# With no file, iacsim infers most of this: API GW → api Lambda from
+# aws_lambda_permission + integration; api → tables from env vars + IAM;
+# api → state machine from STATE_MACHINE_ARN + states:StartExecution; and
+# the whole Map body from the ASL definition. These two scenarios pin the
+# real user-facing paths so the numbers are comparable across runs.
+
+start_workflow:
+  description: "POST /executions — user clicks Run; synchronous part until the 202 returns"
+  entry: aws_api_gateway_rest_api.main
+  steps:
+    - module.api.aws_lambda_function.this
+    - module.table["workflows"].aws_dynamodb_table.this          # read workflow definition
+    - module.table["workspace_members"].aws_dynamodb_table.this  # auth check
+    - module.table["credit_transactions"].aws_dynamodb_table.this # credit check
+    - module.table["executions"].aws_dynamodb_table.this          # write execution row
+    - aws_sfn_state_machine.workflow                              # StartExecution
+    - module.api.aws_lambda_function.this                         # respond 202
+
+run_workflow_3_nodes:
+  description: "Step Functions execution of a 3-node workflow: text_input → image_generation → html_template"
+  entry: aws_sfn_state_machine.workflow
+  steps:
+    - module.worker["parser"].aws_lambda_function.this
+    - module.table["workflows"].aws_dynamodb_table.this
+    - fanout:
+        node: module.worker["input_preparer"].aws_lambda_function.this
+        count: 3
+    - parallel:
+        - - module.worker["image_generation"].aws_lambda_function.this
+          - aws_s3_bucket.outputs                                  # write generated image
+          - module.worker["output_updater"].aws_lambda_function.this
+          - module.table["executions"].aws_dynamodb_table.this
+        - - module.worker["html_template"].aws_lambda_function.this
+          - aws_s3_bucket.outputs
+          - module.worker["output_updater"].aws_lambda_function.this
+          - module.table["executions"].aws_dynamodb_table.this
+    - module.worker["finalizer"].aws_lambda_function.this
+    - module.table["executions"].aws_dynamodb_table.this          # mark complete
+
+poll_status:
+  description: "GET /executions/{id} — the frontend polls this every 2 s"
+  entry: aws_api_gateway_rest_api.main
+  steps:
+    - module.api.aws_lambda_function.this
+    - module.table["executions"].aws_dynamodb_table.this
+    - module.api.aws_lambda_function.this

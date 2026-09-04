@@ -1,0 +1,13 @@
+# Request paths for classic-web. Optional — with no file, iacsim infers
+#   ALB → EC2   from the listener → target group → attachments
+#   EC2 → RDS   from the templatefile() reference to module.database.address
+# Declared here to make the two DB round-trips explicit.
+
+page_load:
+  description: "GET /products — one page render, two sequential DB queries"
+  entry: module.load_balancer.aws_lb.this
+  steps:
+    - module.compute.aws_instance.this["us-east-1a"]
+    - module.database.aws_db_instance.this     # query 1: products
+    - module.database.aws_db_instance.this     # query 2: session
+    - module.compute.aws_instance.this["us-east-1a"]

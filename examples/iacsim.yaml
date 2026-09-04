@@ -1,0 +1,21 @@
+# Sample iacsim.yaml — every key is optional; this is the full default set.
+# Copy next to your Terraform and edit. CLI flags override these.
+provider: aws
+inference:
+  rules: [step_functions, event_source_mapping, lambda_permission,
+          api_gateway_integration, target_group, env_var, iam_policy]
+scenarios:
+  sources: [yaml_file, inferred_from_entrypoints]
+  file: scenarios.yaml
+latency:
+  profiles: [defaults]          # add ./profiles/team.yaml, ./calibrated.yaml ...
+  rules: [distance, processing, cold_start]
+simulation:
+  walker: expected_value        # or monte_carlo (M6)
+  samples: 10000
+analysis:
+  analyzers: [per_hop, per_node, per_category, critical_path]
+  top_n: 10
+report:
+  outputs: [text, json]
+  out_dir: .iacsim

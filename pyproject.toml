@@ -1,0 +1,36 @@
+[project]
+name = "iacsim"
+version = "0.1.0"
+description = "Infrastructure-as-Code → latency simulation. Reads Terraform / CloudFormation, builds an infra graph, simulates request latency, ranks bottlenecks."
+requires-python = ">=3.12"
+dependencies = [
+  "python-hcl2>=4.3",
+  "networkx>=3.2",
+  "typer>=0.12",
+  "pyyaml>=6.0",
+  "rich>=13.7",
+]
+
+[project.optional-dependencies]
+calibrate = ["boto3>=1.34"]          # only needed for `iacsim calibrate` (M7)
+montecarlo = ["numpy>=1.26"]         # only needed for --walker monte_carlo (M6)
+dev = ["pytest>=8", "pytest-cov", "ruff"]
+
+[project.scripts]
+iacsim = "iacsim.cli:app"
+
+# Third-party plugins register here; see iacsim/core/registry.py
+[project.entry-points."iacsim.plugins"]
+
+[tool.ruff]
+line-length = 100
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["iacsim*"]
+
+[tool.setuptools.package-data]
+iacsim = ["latency/defaults.yaml"]
