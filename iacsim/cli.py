@@ -1,6 +1,7 @@
 """`iacsim` command line.
 
     iacsim run   ./infra [--profile p.yaml] [--walker monte_carlo] [--format terraform]
+                         [--all-hops] [-o text -o json -o markdown]
     iacsim graph ./infra                 dump graph.json only (M1 milestone check)
     iacsim diff  ./before ./after        compare two snapshots
     iacsim validate ./infra              parse + normalise + check scenarios.yaml, no simulation
@@ -16,8 +17,16 @@ import typer
 
 from iacsim.core.config import load_config
 from iacsim.core.interfaces import (
-    ANALYZERS, COST_RULES, INFERENCE_RULES, METRIC_SOURCES, NORMALISERS, PARSERS,
-    PROFILE_SOURCES, REPORTERS, SCENARIO_SOURCES, WALKERS,
+    ANALYZERS,
+    COST_RULES,
+    INFERENCE_RULES,
+    METRIC_SOURCES,
+    NORMALISERS,
+    PARSERS,
+    PROFILE_SOURCES,
+    REPORTERS,
+    SCENARIO_SOURCES,
+    WALKERS,
 )
 from iacsim.core.registry import load_builtin_plugins, load_external_plugins
 
@@ -30,16 +39,25 @@ def _bootstrap(target: Path) -> None:
     load_external_plugins(Path.cwd() / "plugins")
 
 
-def _write_outputs(output, cfg, target: Path) -> None:
+REPORT_EXTENSIONS = {"json": "json", "markdown": "md", "text": "txt"}
+
+
+def _write_outputs(output, cfg, target: Path, all_hops: bool = False) -> None:
+    """Text goes to stdout (coloured on a TTY); every other reporter writes
+    <out_dir>/report.<ext>."""
+    import sys
     out_dir = target / cfg.get("report.out_dir")
     out_dir.mkdir(exist_ok=True)
+    options = {"top_n": cfg.get("analysis.top_n"), "all_hops": all_hops}
     for name in cfg.get("report.outputs"):
-        rendered = REPORTERS.get(name)().render(output.findings, output.graph)
+        reporter = REPORTERS.get(name)(**(options | {"color": sys.stdout.isatty()} if name == "text" else options))
+        rendered = reporter.render(output.findings, output.graph)
         if name == "text":
-            typer.echo(rendered)
+            typer.echo(rendered, nl=False)
         else:
-            (out_dir / f"report.{name}").write_text(rendered)
-            typer.echo(f"wrote {out_dir / f'report.{name}'}")
+            path = out_dir / f"report.{REPORT_EXTENSIONS.get(name, name)}"
+            path.write_text(rendered)
+            typer.echo(f"wrote {path}")
 
 
 @app.command()
@@ -49,6 +67,8 @@ def run(
     walker: str = typer.Option(None, help="expected_value | monte_carlo"),
     samples: int = typer.Option(None, help="monte_carlo sample count"),
     fmt: str = typer.Option(None, "--format", help="force parser: terraform | cloudformation"),
+    all_hops: bool = typer.Option(False, "--all-hops", help="show every hop in path order, not just the top-N"),
+    output: list[str] = typer.Option(None, "--output", "-o", help="reporters: text | json | markdown (repeatable)"),
 ) -> None:
     """Simulate every scenario and print the bottleneck report."""
     from iacsim.core import pipeline
@@ -56,8 +76,9 @@ def run(
     cfg = load_config(target, {
         "latency.profiles": ["defaults", *profile] if profile else None,
         "simulation.walker": walker, "simulation.samples": samples, "format": fmt,
+        "report.outputs": output or None,
     })
-    _write_outputs(pipeline.run(target, cfg), cfg, target)
+    _write_outputs(pipeline.run(target, cfg), cfg, target, all_hops=all_hops)
 
 
 @app.command()
@@ -67,6 +88,7 @@ def graph(
 ) -> None:
     """Parse + normalise + infer edges; write graph.json. No simulation."""
     import json
+
     from iacsim.core import pipeline
     _bootstrap(target)
     cfg = load_config(target, {"format": fmt})

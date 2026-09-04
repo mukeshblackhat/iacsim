@@ -88,6 +88,7 @@ class ExpectedValueWalker(Walker):
         self.warnings: list[str] = []
         self.shape = {"hop_count": 0, "sequential_hops": 0, "parallel_groups": 0,
                       "parallel_savings_ms": 0.0, "fanout_copies": 0, "wait_ms": 0.0}
+        self._parallel_seq = 0                      # numbers parallel groups for HopResult.group
 
         walk = _Walk(current=scenario.entry, visited=[scenario.entry], hops=[])
         if graph.find_edge("internet", scenario.entry) is not None:
@@ -116,10 +117,15 @@ class ExpectedValueWalker(Walker):
                 self._wait(step, walk)
 
     def _parallel(self, branches: list[list[Step]], walk: _Walk) -> None:
+        self._parallel_seq += 1
+        group = f"parallel{self._parallel_seq}"
         results = []
-        for branch in branches:
+        for i, branch in enumerate(branches, 1):
             sub = _Walk(current=walk.current, visited=list(walk.visited), hops=[])
             self._walk_steps(branch, sub)
+            for hop in sub.hops:
+                if hop.group is None:                # nested groups keep their inner label
+                    hop.group = f"{group}/branch{i}"
             results.append(sub)
 
         slowest = max(range(len(results)), key=lambda i: results[i].total_ms) if results else None

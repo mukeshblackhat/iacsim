@@ -126,11 +126,58 @@ Legend: ✅ done · 🔨 in progress · ⏳ planned · 🧊 parked
   no inferred edge from any earlier node are estimated as a synthetic invoke
   (warned, never fails).
 
+### M3 done (same day, parallel agent)
+- **`per_category`** is now the A1 / A2 / A3 view from SPEC §1a: additive
+  lines `distance` (A1), `processing` + `cold_start` (A2, with a `service`
+  roll-up), `wait` (A3) — shares sum to 100 % over counted (critical-path)
+  hops — plus informational A3 lines `parallel_savings`, `hops`, `fanout`.
+  Every detail says what would change it ("2 cross-region hop(s):
+  database.db_instance (eu-west-1) ← classic-web-us-east-1a (us-east-1) —
+  co-locate to remove this").
+- **`per_node`** merges repeat calls ("2 call(s) into rds — dominated by
+  distance"); **`critical_path`** emits nothing without a parallel group and
+  otherwise lists each branch with its slack (ties are called out);
+  **`per_hop`** unchanged but counted hops only.
+- **`recommendations`** (new analyzer, on by default): rule-based, 1–5 lines,
+  each with an estimated saving and the hops it was derived from — co-locate a
+  cross-region datastore, batch repeated calls, provisioned concurrency when
+  cold start > 10 %, run independent reads in parallel, replace Wait states.
+  What it prints:
+  - classic-web-bad `page_load`: **"co-locate database.db_instance with
+    classic-web-us-east-1a — saves ~296 ms (83 %)"** (within 1 % of the
+    298.8 ms diff) and "batch the 2 calls … saves ~155 ms".
+  - foosh `run_workflow_3_nodes`: **"provisioned concurrency on
+    async-workflow-parser-staging, …-input-preparer-staging,
+    …-image-generation-staging — saves ~100 ms (54 %)"**; foosh
+    `start_workflow` also gets "run the 4 reads from async-workflow-api-staging
+    in parallel — saves ~15 ms".
+- **Reports** share one `Brief` structure (`reporter/_brief.py`): header →
+  *Where the time goes* (layer bar) → *Top bottlenecks* → *Recommendations* →
+  *Hops* (top-N by ms in path order; `--all-hops` for everything) → *Critical
+  path* (parallel only) → warnings. `text` draws it with `rich` (colour on a
+  TTY, plain otherwise); new **`markdown`** reporter for PR comments;
+  `-o/--output` picks reporters.
+- **`report.json` schema 2** (`reporter/json_.py` docstring is the contract):
+  `generated_at`, `profile.sources`, `graph`, and per scenario `hops` (with
+  `label`, `group`) and `findings` grouped by analyzer. `Finding` gained
+  `refs`, `layer`, `additive`; `HopResult` gained `group`
+  ("parallel1/branch2", set by the walker).
+- **Tests**: 69 passing (analyzers on a hand-built Result, every reporter on
+  every example, json contract, classic-web-bad's top recommendation ≈ the
+  measured delta).
+- **Known limitations**: recommendation savings are first-order estimates
+  (co-locate assumes ~1 ms cross-AZ per leg; batching assumes one call's cost
+  per extra call); the parallelise rule only sees adjacent reads from one
+  caller and cannot know about data dependencies the scenario doesn't state;
+  `critical_path` needs the walker's `group` labels, so the Monte-Carlo walker
+  (M6) must set them too.
+
 ### Next session
-- Start **M3**: analyzers on real output — add a `shape` category to
-  `per_category` from `Result.shape`, make `critical_path` report slack for
-  off-path hops, tighten the text report (top-N per analyzer, hide duplicates
-  of the hop table), version `report.json`.
+- Start **M4** (`iacsim diff`): run the pipeline on two targets, align
+  scenarios by `name`, hops by `label` + path index, `per_node` /
+  `per_category` / `recommendations` by `subject` (all documented in
+  `reporter/json_.py`); print total delta, per-category delta, and the hops
+  that changed; a `markdown` variant for PR comments.
 
 ---
 
@@ -141,7 +188,7 @@ Legend: ✅ done · 🔨 in progress · ⏳ planned · 🧊 parked
 | M0 | Agree the plan, lay the foundation | SPEC.md agreed; skeleton with every extension point registered; 3 example stacks | ✅ | 2026-09-04 |
 | M1 | Terraform → graph | `iacsim graph examples/classic-web` → nodes + edges with evidence in `graph.json`; modules, `for_each`, `templatefile` refs resolved; foosh-serverless parses with Step Functions edges in call order | ✅ | 2026-09-04 |
 | M2 | Simulate one request | `iacsim run examples/classic-web` prints total ms + per-hop table; expected-value walker handles sequential / parallel / fanout; inferred scenarios for entry points with no `scenarios.yaml` | ✅ | 2026-09-04 |
-| M3 | Say *why* it's slow | All 4 analyzers on real output; text report ranks hops, nodes, categories; `report.json` versioned | ⏳ | |
+| M3 | Say *why* it's slow | All 4 analyzers on real output + `recommendations`; text/markdown report is a bottleneck brief (A1/A2/A3 bar, top nodes, suggestions with savings, hop table); `report.json` schema 2 | ✅ | 2026-09-04 |
 | M4 | Compare designs | `iacsim diff classic-web classic-web-bad` shows the cross-region DB as the delta; per-hop before/after | ⏳ | |
 | M5 | Read CloudFormation / CDK output | `iacsim graph ~/Foosh/.../cdk.out` produces the same graph as `foosh-serverless` (correctness check) | ⏳ | |
 | M6 | Tail latency + polish | `--walker monte_carlo --samples N` → p50/p95/p99; static graph viewer reading `graph.json`; validation, docs, tests | ⏳ | |

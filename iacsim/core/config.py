@@ -39,7 +39,7 @@ DEFAULTS: dict[str, Any] = {
         "samples": 10_000,
     },
     "analysis": {
-        "analyzers": ["per_hop", "per_node", "per_category", "critical_path"],
+        "analyzers": ["per_hop", "per_node", "per_category", "critical_path", "recommendations"],
         "top_n": 10,
     },
     "report": {

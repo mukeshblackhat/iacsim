@@ -1,1 +1,7 @@
-from iacsim.analyzer import per_hop, per_node, per_category, critical_path  # noqa: F401
+from iacsim.analyzer import (  # noqa: F401
+    critical_path,
+    per_category,
+    per_hop,
+    per_node,
+    recommendations,
+)

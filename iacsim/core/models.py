@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import Any
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
 
 
 # ------------------------------------------------------------------ parser output
@@ -210,6 +210,11 @@ class HopResult:
     breakdown: dict[str, float]
     evidence: str
     on_critical_path: bool = True
+    group: str | None = None             # "parallel1/branch2" when inside a parallel group, else None
+
+    @property
+    def label(self) -> str:
+        return f"{self.src} → {self.dst}"
 
 
 @dataclass
@@ -228,12 +233,24 @@ class Result:
 
 @dataclass
 class Finding:
-    """One line of the bottleneck report."""
+    """One line of the bottleneck report.
+
+    `latency_ms` is the time attributed to `subject` — except for the
+    `recommendations` analyzer, where it is the *estimated saving*.
+    `refs` names the hops ("a → b") or nodes the number was derived from, so
+    every claim in the report can be traced back to the hop table.
+    `layer` is A1 (distance) / A2 (service) / A3 (shape) where it applies.
+    `additive` is False for informational lines that must not be summed
+    toward the total (parallel savings, hop counts).
+    """
     analyzer: str
-    subject: str                         # hop "a → b", node id, or category name
+    subject: str                         # hop "a → b", node id, category name, or a recommendation title
     latency_ms: float
-    share: float                         # 0..1 of scenario total
+    share: float                         # 0..1 of scenario total (0 for non-additive lines)
     detail: str
+    refs: list[str] = field(default_factory=list)
+    layer: str | None = None
+    additive: bool = True
 
 
 @dataclass
@@ -248,6 +265,27 @@ class Findings:
     shape: dict[str, float] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     schema_version: str = SCHEMA_VERSION
+
+    def by_analyzer(self) -> dict[str, list[Finding]]:
+        """Findings grouped by analyzer name, in first-seen order."""
+        grouped: dict[str, list[Finding]] = {}
+        for f in self.findings:
+            grouped.setdefault(f.analyzer, []).append(f)
+        return grouped
+
+    def to_dict(self) -> dict[str, Any]:
+        """The report.json shape for one scenario (see reporter/json_.py)."""
+        return {
+            "name": self.scenario,
+            "description": self.description,
+            "source": self.source,
+            "total_ms": self.total_ms,
+            "shape": self.shape,
+            "profile": {"sources": self.profile_sources},
+            "hops": [asdict(h) | {"label": h.label} for h in self.hops],
+            "findings": {name: [asdict(f) for f in items] for name, items in self.by_analyzer().items()},
+            "warnings": self.warnings,
+        }
 
 
 @dataclass

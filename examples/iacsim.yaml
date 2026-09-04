@@ -14,7 +14,7 @@ simulation:
   walker: expected_value        # or monte_carlo (M6)
   samples: 10000
 analysis:
-  analyzers: [per_hop, per_node, per_category, critical_path]
+  analyzers: [per_hop, per_node, per_category, critical_path, recommendations]
   top_n: 10
 report:
   outputs: [text, json]

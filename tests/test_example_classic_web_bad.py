@@ -53,3 +53,18 @@ def test_cross_region_database_is_the_whole_difference(classic_web_run, classic_
             assert hop.breakdown["distance"] == pytest.approx(150)
         else:
             assert hop.breakdown == next(h for h in good.hops if (h.src, h.dst) == (hop.src, hop.dst)).breakdown
+
+
+# ---------------------------------------------------------------- M3: analyzers
+
+def test_top_recommendation_is_to_co_locate_the_database(classic_web_run, classic_web_bad_run):
+    from conftest import result
+    delta = result(classic_web_bad_run, "page_load").total_ms - result(classic_web_run, "page_load").total_ms
+    findings = next(f for f in classic_web_bad_run.findings if f.scenario == "page_load")
+    recs = findings.by_analyzer()["recommendations"]
+    assert recs[0].subject.startswith("co-locate module.database.aws_db_instance.this") or \
+        recs[0].subject.startswith("co-locate database.db_instance")
+    assert recs[0].latency_ms == pytest.approx(delta, rel=0.05)
+    assert recs[0].refs == [f"{WEB_A} → {DB}"] * 2
+    categories = {f.subject: f for f in findings.by_analyzer()["per_category"]}
+    assert categories["distance"].share > 0.9 and categories["distance"].layer == "A1"
