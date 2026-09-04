@@ -37,6 +37,12 @@ def foosh():
     return _build("foosh-serverless")
 
 
+@pytest.fixture(scope="session")
+def foosh_cfn():
+    """The real CDK-synthesized template of the same stack (M5)."""
+    return _build("foosh-cfn")
+
+
 def edge(graph, src: str, dst: str):
     e = graph.find_edge(src, dst)
     assert e is not None, f"missing edge {src} → {dst}; have: " + "\n".join(f"{x.src} → {x.dst}" for x in graph.edges)

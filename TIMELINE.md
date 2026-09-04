@@ -219,13 +219,57 @@ Legend: ✅ done · 🔨 in progress · ⏳ planned · 🧊 parked
   reported); hop alignment is by label, so a re-ordered path with the same
   hops shows as unchanged.
 
+### M5 done (same day, parallel agent)
+- **Fresh template**: `cdk synth` of `~/Foosh/async-workflows/infrastructure`
+  worked (aws-cdk-lib in a scratch venv; the CDK CLI complained about a
+  manifest-schema mismatch *after* the app had written the template). Copied
+  to `examples/foosh-cfn/template.json` — 77 resources, 16 Lambdas, 10 tables,
+  matching the Jul-2026 CDK source — with 11 secret env values → `REDACTED`
+  and the account id → `123456789012` (asserted by a test). Nothing under
+  `~/Foosh` was modified.
+- **Adapter** (`iacsim/parsers/cloudformation/`): `template.py` (JSON, YAML
+  with `!Ref`/`!GetAtt`/`!Sub`/… short tags, region guess from ARNs),
+  `intrinsics.py` (Ref / GetAtt / Join / Sub / Select / If / Split / GetAZs /
+  pseudo-params → the Terraform placeholder convention `${type.LogicalId.attr}`),
+  `canonical.py` (one table: `AWS::X::Y` → `aws_x_y`, PascalCase → snake_case,
+  per-type aliases like `TableName` → `name`, synthetic
+  `aws_api_gateway_integration` / `aws_lb_target_group_attachment`, literal
+  env-var names → placeholders). Addresses are `<terraform type>.<LogicalId>`,
+  so the AWS normaliser and all 8 inference rules run **unchanged**.
+  `Parser` now takes `**options` (`parsers.cloudformation.region` in
+  `iacsim.yaml`, `--region` on `run`/`graph`); a template *file* is a valid
+  target (config / scenarios / outputs live beside it).
+- **Correctness check** (`iacsim diff examples/foosh-serverless examples/foosh-cfn
+  --align-by label`): 30 nodes on both sides, same kind/subtype multiset,
+  no warnings, zero moves. Every difference is enumerated in
+  `tests/test_example_foosh_cfn.py`:
+  | Difference | Count | Why |
+  |---|---|---|
+  | node labels | 4 | the twin picked its own names for `workflows` / `executions` tables, the outputs bucket and the html-template Lambda (real: `AsyncWorkflowsStaging`, `WorkflowExecutionsStagingSF`, `async-workflow-outputs-staging-new`, `async-workflow-html-template-processor-staging`) |
+  | edge kind, 16 Lambdas × 3 tables | 48 | the twin gives every Lambda env vars for all 10 tables; the real stack passes 7 and reaches `PaymentIdempotency` / `PublishedApps` / `AppExecutions` through IAM only → env_var READ vs iam_policy WRITE |
+  | Step Functions Task targets | 2 + 2 | the twin's condensed ASL has Tasks for lipsync / image-to-image and Pass states for inputs; the real one is the reverse — all 15 workers are reached either way |
+  | state machine → tables | 2 | CDK grants the SFN role `dynamodb:*` on workflows / executions; the twin's role only invokes Lambdas |
+  Everything else — 146 edges incl. internet → API, API GW → api Lambda,
+  api → state machine, the 12 real Step Functions Task edges, all worker →
+  table / bucket reads — is identical. `iacsim run examples/foosh-cfn` works
+  with inferred scenarios (232 / 81 / 97 ms).
+- **Tests**: 115 passing (+19: intrinsics → placeholders, YAML short tags,
+  canonical types/attrs, synthetic resources, physical-name resolution,
+  DefinitionString reassembly, region guess, redaction, and the
+  enumerated-differences check above).
+- **Known limitations**: Conditions are not evaluated (`Fn::If` takes the
+  true branch, warned); `Fn::FindInMap` / `Fn::ImportValue` / `Fn::Cidr` are
+  kept as `<name>` markers; literal-name resolution only looks at Lambda env
+  vars (not ECS container definitions) and only at datastore / queue names;
+  no AZ placement for CFN Lambdas (same as Terraform). Follow-up worth doing
+  outside M5: rename the four resources in the Terraform twin to the real
+  names so the label diff is empty.
+
 ### Next session
-- Start **M5** (CloudFormation adapter): `parsers/cloudformation/parser.py`
-  → RawResources from `cdk.out/*.template.json`; correctness check =
-  `iacsim diff examples/foosh-serverless <cdk.out> --align-by label` reports
-  an empty graph diff. Set node `label`s in the normaliser from
-  `FunctionName` / `TableName` / `BucketName` so labels match the Terraform
-  twin.
+- Start **M6**: Monte-Carlo walker (`--walker monte_carlo --samples N` →
+  p50/p95/p99, must set `HopResult.group` like the deterministic walker),
+  static graph viewer reading `graph.json` / `report.json`, validation,
+  docs, tests.
 
 ---
 
@@ -238,7 +282,7 @@ Legend: ✅ done · 🔨 in progress · ⏳ planned · 🧊 parked
 | M2 | Simulate one request | `iacsim run examples/classic-web` prints total ms + per-hop table; expected-value walker handles sequential / parallel / fanout; inferred scenarios for entry points with no `scenarios.yaml` | ✅ | 2026-09-04 |
 | M3 | Say *why* it's slow | All 4 analyzers on real output + `recommendations`; text/markdown report is a bottleneck brief (A1/A2/A3 bar, top nodes, suggestions with savings, hop table); `report.json` schema 2 | ✅ | 2026-09-04 |
 | M4 | Compare designs | `iacsim diff classic-web classic-web-bad` shows the cross-region DB as the delta (graph-level move, A1 shift, the two RDS hops, co-locate recommendation); `--fail-on-regression` for CI | ✅ | 2026-09-04 |
-| M5 | Read CloudFormation / CDK output | `iacsim graph ~/Foosh/.../cdk.out` produces the same graph as `foosh-serverless` (correctness check) | ⏳ | |
+| M5 | Read CloudFormation / CDK output | `iacsim graph examples/foosh-cfn` (real `cdk synth` output) produces the same graph as `foosh-serverless` — 30/30 nodes, every difference enumerated and explained in the test | ✅ | 2026-09-04 |
 | M6 | Tail latency + polish | `--walker monte_carlo --samples N` → p50/p95/p99; static graph viewer reading `graph.json`; validation, docs, tests | ⏳ | |
 | M7 | Real numbers | `iacsim calibrate` pulls Lambda Duration / InitDuration, DynamoDB latency from CloudWatch into a profile YAML; run against Foosh staging | ⏳ | |
 

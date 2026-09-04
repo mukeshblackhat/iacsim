@@ -1,6 +1,9 @@
 # Sample iacsim.yaml — every key is optional; this is the full default set.
 # Copy next to your Terraform and edit. CLI flags override these.
 provider: aws
+parsers:
+  cloudformation:
+    region: null                # CloudFormation has no provider block; null = guess from ARNs, else us-east-1
 inference:
   rules: [step_functions, event_source_mapping, lambda_permission,
           api_gateway_integration, target_group, env_var, iam_policy]

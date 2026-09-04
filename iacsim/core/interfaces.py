@@ -24,7 +24,14 @@ from iacsim.core.registry import Registry
 
 
 class Parser(ABC):
-    """IaC files on disk → RawResources. One per input format."""
+    """IaC files on disk → RawResources. One per input format.
+
+    `options` come from `parsers.<name>` in iacsim.yaml (e.g. the region a
+    CloudFormation template deploys to); parsers that need none ignore them.
+    """
+
+    def __init__(self, **options: Any) -> None:
+        self.options = options
 
     @classmethod
     @abstractmethod

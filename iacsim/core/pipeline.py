@@ -43,7 +43,8 @@ class PipelineOutput:
 def build_graph(target: Path, cfg: Config) -> tuple[InfraGraph, RawResources]:
     """Stages 1–3: parse → normalise → infer edges."""
     parser_cls = detect_parser(target, forced=cfg.get("format"))
-    raw = parser_cls().parse(target)
+    options = cfg.get(f"parsers.{parser_cls.registry_name}") or {}
+    raw = parser_cls(**{k: v for k, v in options.items() if v is not None}).parse(target)
 
     graph = NORMALISERS.get(cfg.get("provider"))().normalise(raw)
     graph.source_format = raw.format
@@ -94,8 +95,9 @@ def load_scenarios(graph: InfraGraph, target: Path, cfg: Config) -> list[Scenari
     """Stage 5: declared scenarios first, then inferred ones for entry points not covered."""
     scenarios: list[Scenario] = []
     seen: set[str] = set()
+    root = target if target.is_dir() else target.parent      # a template file: scenarios.yaml sits beside it
     for source_name in cfg.get("scenarios.sources"):
-        for scenario in SCENARIO_SOURCES.get(source_name)().load(graph, target):
+        for scenario in SCENARIO_SOURCES.get(source_name)().load(graph, root):
             if scenario.name not in seen:
                 scenarios.append(scenario)
                 seen.add(scenario.name)

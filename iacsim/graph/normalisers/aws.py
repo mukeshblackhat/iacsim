@@ -93,7 +93,7 @@ IGNORED_PREFIXES = (
     "AWS::Lambda::EventSourceMapping",
     "aws_s3_bucket_", "AWS::S3::BucketPolicy",
     "aws_vpc_peering_connection_accepter", "aws_route", "aws_internet_gateway",
-    "aws_cloudwatch_", "AWS::Logs::", "AWS::CDK::",
+    "aws_cloudwatch_", "AWS::Logs::", "AWS::CDK::", "aws_cdk_",
     "aws_sqs_queue_policy", "aws_sns_topic_subscription", "aws_sns_topic_policy",
     "aws_ecs_cluster", "aws_ecs_task_definition",
 )

@@ -14,6 +14,9 @@ import yaml
 
 DEFAULTS: dict[str, Any] = {
     "provider": "aws",
+    "parsers": {
+        "cloudformation": {"region": None},   # None → first region literal in the template → us-east-1
+    },
     "inference": {
         "rules": [
             "step_functions",

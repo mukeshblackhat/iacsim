@@ -21,8 +21,9 @@ import importlib
 import importlib.metadata
 import pkgutil
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Generic, TypeVar
+from typing import Generic, TypeVar
 
 T = TypeVar("T")
 
