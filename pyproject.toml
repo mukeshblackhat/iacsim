@@ -5,7 +5,6 @@ description = "Infrastructure-as-Code → latency simulation. Reads Terraform / 
 requires-python = ">=3.12"
 dependencies = [
   "python-hcl2>=4.3",
-  "networkx>=3.2",
   "typer>=0.12",
   "pyyaml>=6.0",
   "rich>=13.7",
