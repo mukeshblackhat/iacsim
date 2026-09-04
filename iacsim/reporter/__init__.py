@@ -1,1 +1,2 @@
-from iacsim.reporter import text, json_ as json  # noqa: F401
+from iacsim.reporter import json_ as json
+from iacsim.reporter import text  # noqa: F401

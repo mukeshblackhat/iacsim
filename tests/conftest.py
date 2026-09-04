@@ -41,3 +41,28 @@ def edge(graph, src: str, dst: str):
     e = graph.find_edge(src, dst)
     assert e is not None, f"missing edge {src} → {dst}; have: " + "\n".join(f"{x.src} → {x.dst}" for x in graph.edges)
     return e
+
+
+def _run(name: str):
+    from iacsim.core.pipeline import run
+    target = EXAMPLES / name
+    return run(target, load_config(target))
+
+
+@pytest.fixture(scope="session")
+def classic_web_run():
+    return _run("classic-web")
+
+
+@pytest.fixture(scope="session")
+def classic_web_bad_run():
+    return _run("classic-web-bad")
+
+
+@pytest.fixture(scope="session")
+def foosh_run():
+    return _run("foosh-serverless")
+
+
+def result(output, scenario: str):
+    return next(r for r in output.results if r.scenario == scenario)

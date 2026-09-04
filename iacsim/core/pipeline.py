@@ -4,15 +4,30 @@ order of stages; every stage is fetched from a registry by the name in Config.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 from iacsim.core.config import Config
 from iacsim.core.interfaces import (
-    ANALYZERS, COST_RULES, INFERENCE_RULES, NORMALISERS, PARSERS, PROFILE_SOURCES,
-    SCENARIO_SOURCES, WALKERS,
+    ANALYZERS,
+    COST_RULES,
+    INFERENCE_RULES,
+    NORMALISERS,
+    PROFILE_SOURCES,
+    SCENARIO_SOURCES,
+    WALKERS,
 )
-from iacsim.core.models import Findings, InfraGraph, Latency, Profile, RawResources, Result, Scenario
+from iacsim.core.models import (
+    Edge,
+    Findings,
+    InfraGraph,
+    Latency,
+    Profile,
+    RawResources,
+    Result,
+    Scenario,
+)
 from iacsim.parsers.detect import detect_parser
 
 
@@ -53,14 +68,26 @@ def load_profile(cfg: Config) -> Profile:
     return merge_profiles(layers)
 
 
-def cost_graph(graph: InfraGraph, profile: Profile, cfg: Config) -> None:
-    """Stage 4b: every edge gets a Latency from the enabled cost rules."""
+def make_pricer(graph: InfraGraph, profile: Profile, cfg: Config) -> Callable[[Edge], Latency]:
+    """One function that prices any edge — real or synthetic — with the enabled
+    cost rules. The walker gets this so hops with no inferred edge (or with a
+    per-step `op` override) are priced by exactly the same rules."""
     rules = [COST_RULES.get(name)() for name in cfg.get("latency.rules")]
-    for edge in graph.edges:
+
+    def price(edge: Edge) -> Latency:
         breakdown: dict[str, float] = {}
         for rule in rules:
             breakdown.update(rule.cost(edge, graph, profile))
-        edge.latency = Latency(expected=sum(breakdown.values()), breakdown=breakdown)
+        return Latency(expected=sum(breakdown.values()), breakdown=breakdown)
+
+    return price
+
+
+def cost_graph(graph: InfraGraph, profile: Profile, cfg: Config) -> None:
+    """Stage 4b: every edge gets a Latency from the enabled cost rules."""
+    price = make_pricer(graph, profile, cfg)
+    for edge in graph.edges:
+        edge.latency = price(edge)
 
 
 def load_scenarios(graph: InfraGraph, target: Path, cfg: Config) -> list[Scenario]:
@@ -75,19 +102,28 @@ def load_scenarios(graph: InfraGraph, target: Path, cfg: Config) -> list[Scenari
     return scenarios
 
 
-def simulate(graph: InfraGraph, scenarios: list[Scenario], cfg: Config) -> list[Result]:
-    """Stage 6."""
+def simulate(graph: InfraGraph, scenarios: list[Scenario], cfg: Config, profile: Profile) -> list[Result]:
+    """Stage 6. The walker receives `price` so it can cost synthetic hops."""
     walker = WALKERS.get(cfg.get("simulation.walker"))()
-    return [walker.run(graph, s, samples=cfg.get("simulation.samples")) for s in scenarios]
+    price = make_pricer(graph, profile, cfg)
+    return [walker.run(graph, s, samples=cfg.get("simulation.samples"), price=price) for s in scenarios]
 
 
-def analyse(results: list[Result], graph: InfraGraph, profile: Profile, cfg: Config) -> list[Findings]:
+def analyse(results: list[Result], graph: InfraGraph, profile: Profile, cfg: Config,
+            scenarios: list[Scenario] | None = None) -> list[Findings]:
     """Stage 7."""
     analyzers = [ANALYZERS.get(name)() for name in cfg.get("analysis.analyzers")]
+    by_name = {s.name: s for s in scenarios} if scenarios else {}
     out = []
     for result in results:
         findings = [f for a in analyzers for f in a.analyse(result, graph)]
-        out.append(Findings(result.scenario, result.total_ms, findings, profile.sources))
+        scenario = by_name.get(result.scenario)
+        out.append(Findings(
+            result.scenario, result.total_ms, findings, profile.sources,
+            description=scenario.description if scenario else None,
+            source=scenario.source if scenario else "declared",
+            hops=result.hops, shape=result.shape, warnings=result.warnings,
+        ))
     return out
 
 
@@ -97,6 +133,6 @@ def run(target: Path, cfg: Config) -> PipelineOutput:
     profile = load_profile(cfg)
     cost_graph(graph, profile, cfg)
     scenarios = load_scenarios(graph, target, cfg)
-    results = simulate(graph, scenarios, cfg)
-    findings = analyse(results, graph, profile, cfg)
+    results = simulate(graph, scenarios, cfg, profile)
+    findings = analyse(results, graph, profile, cfg, scenarios)
     return PipelineOutput(graph, scenarios, results, findings, profile)

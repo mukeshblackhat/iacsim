@@ -9,6 +9,9 @@
             - aws_dynamodb_table.orders
             - aws_sqs_queue.notifications
         - fanout: { node: aws_lambda_function.render, count: 20 }
+        - node: aws_dynamodb_table.orders     # override the edge's operation
+          op: write
+        - wait_ms: 20000                      # Step Functions Wait
         - aws_lambda_function.confirm
 
 Every node mentioned must exist in the graph; otherwise a clear error naming
@@ -52,6 +55,11 @@ class YamlScenarioSource(ScenarioSource):
         if isinstance(item, str):
             self._check(item, graph, scenario)
             return Step(node=item)
+        if "node" in item:
+            self._check(item["node"], graph, scenario)
+            return Step(node=item["node"], op=item.get("op"), note=item.get("note"))
+        if "wait_ms" in item:
+            return Step(wait_ms=float(item["wait_ms"]), note=item.get("note"))
         if "parallel" in item:
             branches = [[self._step(x, graph, scenario)] if not isinstance(x, list)
                         else [self._step(y, graph, scenario) for y in x]

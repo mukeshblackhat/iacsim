@@ -1,3 +1,4 @@
+import pytest
 from conftest import edge
 
 from iacsim.core.models import EdgeKind, NodeKind
@@ -49,3 +50,14 @@ def test_instances_read_the_database_via_user_data(classic_web):
 def test_edge_count_is_exact(classic_web):
     graph, _ = classic_web
     assert len(graph.edges) == 5
+
+
+# ---------------------------------------------------------------- M2: run
+
+def test_page_load_walks_lb_web_db_db_and_back(classic_web_run):
+    from conftest import result
+    r = result(classic_web_run, "page_load")
+    assert [(h.src, h.dst) for h in r.hops] == [
+        ("internet", LB), (LB, WEB_A), (WEB_A, DB), (WEB_A, DB), (DB, WEB_A)]
+    assert r.warnings == []
+    assert r.total_ms == pytest.approx(57.2)

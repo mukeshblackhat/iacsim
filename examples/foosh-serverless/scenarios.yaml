@@ -14,7 +14,8 @@ start_workflow:
     - module.table["workflows"].aws_dynamodb_table.this          # read workflow definition
     - module.table["workspace_members"].aws_dynamodb_table.this  # auth check
     - module.table["credit_transactions"].aws_dynamodb_table.this # credit check
-    - module.table["executions"].aws_dynamodb_table.this          # write execution row
+    - node: module.table["executions"].aws_dynamodb_table.this  # write execution row
+      op: write
     - aws_sfn_state_machine.workflow                              # StartExecution
     - module.api.aws_lambda_function.this                         # respond 202
 
@@ -29,15 +30,20 @@ run_workflow_3_nodes:
         count: 3
     - parallel:
         - - module.worker["image_generation"].aws_lambda_function.this
-          - aws_s3_bucket.outputs                                  # write generated image
+          - node: aws_s3_bucket.outputs                            # write generated image
+            op: write
           - module.worker["output_updater"].aws_lambda_function.this
-          - module.table["executions"].aws_dynamodb_table.this
+          - node: module.table["executions"].aws_dynamodb_table.this
+            op: write
         - - module.worker["html_template"].aws_lambda_function.this
-          - aws_s3_bucket.outputs
+          - node: aws_s3_bucket.outputs
+            op: write
           - module.worker["output_updater"].aws_lambda_function.this
-          - module.table["executions"].aws_dynamodb_table.this
+          - node: module.table["executions"].aws_dynamodb_table.this
+            op: write
     - module.worker["finalizer"].aws_lambda_function.this
-    - module.table["executions"].aws_dynamodb_table.this          # mark complete
+    - node: module.table["executions"].aws_dynamodb_table.this  # mark complete
+      op: write
 
 poll_status:
   description: "GET /executions/{id} — the frontend polls this every 2 s"

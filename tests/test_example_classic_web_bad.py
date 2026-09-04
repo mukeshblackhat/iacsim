@@ -1,3 +1,4 @@
+import pytest
 from conftest import edge
 
 from iacsim.core.models import EdgeKind
@@ -38,3 +39,17 @@ def test_same_module_reuse_yields_same_edge_set_plus_peering(classic_web, classi
     good, bad = classic_web[0], classic_web_bad[0]
     pairs = lambda g: {(e.src, e.dst, e.kind) for e in g.edges}
     assert pairs(bad) - pairs(good) == {(WEB_VPC, DB_VPC, EdgeKind.PEER)}
+
+
+# ---------------------------------------------------------------- M2: run
+
+def test_cross_region_database_is_the_whole_difference(classic_web_run, classic_web_bad_run):
+    from conftest import result
+    good, bad = result(classic_web_run, "page_load"), result(classic_web_bad_run, "page_load")
+    # two DB round-trips × (request + response) × (75 ms cross-region − 0.3 ms same-AZ)
+    assert bad.total_ms - good.total_ms == pytest.approx(2 * 2 * (75 - 0.3))
+    for hop in bad.hops:
+        if hop.dst == DB:
+            assert hop.breakdown["distance"] == pytest.approx(150)
+        else:
+            assert hop.breakdown == next(h for h in good.hops if (h.src, h.dst) == (hop.src, hop.dst)).breakdown

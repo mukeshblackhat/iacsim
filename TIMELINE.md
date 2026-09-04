@@ -85,9 +85,52 @@ Legend: ✅ done · 🔨 in progress · ⏳ planned · 🧊 parked
   contains plaintext Razorpay + FAL API keys. Not copied anywhere. Should be
   rotated and moved to Secrets Manager.
 
+### M2 done (same day, parallel agent)
+- **Expected-value walker** (`simulator/walkers/expected_value.py`): walks
+  declared steps, charging one-way `distance` ×2 for synchronous hops and
+  processing / cold start once. Picks the edge to charge as: direct → response
+  leg (destination already visited; network not re-charged) → *via caller*
+  (most recent earlier node with an edge to the target — this is how "api
+  reads table A then table B" and every Step Functions invocation get
+  attributed to the real caller) → synthetic estimate + warning. `parallel` =
+  max(branches) with off-path hops marked `·`; `fanout` costed once; `wait_ms`
+  steps; `internet → entry` charged automatically; a repeated node = repeat
+  call. `Result.shape` records Layer A3 (hop count, parallel savings, fan-out
+  copies, waits).
+- **Scenario steps** gained `op:` (re-price a hop as write / publish …) and
+  `wait_ms:`; the pipeline hands the walker the same pricing function the
+  graph was costed with (`make_pricer`), so synthetic hops use identical rules.
+- **Inferred scenarios** (`scenarios/inferred.py`): from every `internet →`
+  entry point, DFS that stops at datastores / queues and *replays* a state
+  machine's `attrs["workflow"]` (Task, Map, Parallel, Choice → branch with the
+  most tasks, Wait). One path per (entry, leaf subtype), max 5 — Foosh yields
+  3, not 176.
+- **Distance rule** fix: an unknown AZ on either side (ALB, DynamoDB, Lambda)
+  is `same_region_unknown_az` (0.5 ms), not cross-AZ.
+- **Text report** now prints the hop table in path order with breakdown and
+  evidence, the shape line, then analyzer sections; `validate` works.
+- **Numbers** (`iacsim run`, defaults profile):
+  | Example / scenario | total |
+  |---|---|
+  | classic-web `page_load` | 57.2 ms |
+  | classic-web-bad `page_load` | 356.0 ms — **+298.8 ms = 2 DB round-trips × 2 legs × (75 − 0.3)** |
+  | foosh `start_workflow` | 151.0 ms |
+  | foosh `run_workflow_3_nodes` | 184.0 ms (parallel group saves 92 ms; fan-out ×3 costed once) |
+  | foosh `poll_status` | 106.0 ms |
+  | foosh inferred `…/StateMachine` | 232.0 ms |
+- **Tests**: 45 passing (walker unit tests on a hand-built graph, inferred
+  scenario tests, per-example `run` assertions incl. the exact cross-region delta).
+- **Known limitations**: the orchestrator's own transition cost is charged only
+  on the hop *into* the state machine, not per Task; Choice branch selection
+  is "most tasks", not the ASL `Default`; declared steps that name a node with
+  no inferred edge from any earlier node are estimated as a synthetic invoke
+  (warned, never fails).
+
 ### Next session
-- Start **M2**: expected-value walker + inferred scenarios →
-  `iacsim run examples/classic-web` prints total ms + per-hop table.
+- Start **M3**: analyzers on real output — add a `shape` category to
+  `per_category` from `Result.shape`, make `critical_path` report slack for
+  off-path hops, tighten the text report (top-N per analyzer, hide duplicates
+  of the hop table), version `report.json`.
 
 ---
 
@@ -97,7 +140,7 @@ Legend: ✅ done · 🔨 in progress · ⏳ planned · 🧊 parked
 |---|---|---|---|---|
 | M0 | Agree the plan, lay the foundation | SPEC.md agreed; skeleton with every extension point registered; 3 example stacks | ✅ | 2026-09-04 |
 | M1 | Terraform → graph | `iacsim graph examples/classic-web` → nodes + edges with evidence in `graph.json`; modules, `for_each`, `templatefile` refs resolved; foosh-serverless parses with Step Functions edges in call order | ✅ | 2026-09-04 |
-| M2 | Simulate one request | `iacsim run examples/classic-web` prints total ms + per-hop table; expected-value walker handles sequential / parallel / fanout; inferred scenarios for entry points with no `scenarios.yaml` | ⏳ | |
+| M2 | Simulate one request | `iacsim run examples/classic-web` prints total ms + per-hop table; expected-value walker handles sequential / parallel / fanout; inferred scenarios for entry points with no `scenarios.yaml` | ✅ | 2026-09-04 |
 | M3 | Say *why* it's slow | All 4 analyzers on real output; text report ranks hops, nodes, categories; `report.json` versioned | ⏳ | |
 | M4 | Compare designs | `iacsim diff classic-web classic-web-bad` shows the cross-region DB as the delta; per-hop before/after | ⏳ | |
 | M5 | Read CloudFormation / CDK output | `iacsim graph ~/Foosh/.../cdk.out` produces the same graph as `foosh-serverless` (correctness check) | ⏳ | |

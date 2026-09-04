@@ -1,3 +1,4 @@
+import pytest
 from conftest import edge
 
 from iacsim.core.models import EdgeKind, NodeKind
@@ -99,3 +100,32 @@ def _flatten(steps):
             yield from _flatten([nested])
         for branch in (s.get("branches") or {}).values() if isinstance(s.get("branches"), dict) else (s.get("branches") or []):
             yield from _flatten(branch)
+
+
+# ---------------------------------------------------------------- M2: run
+
+def test_start_workflow_attributes_every_table_read_to_the_api_lambda(foosh_run):
+    from conftest import result
+    r = result(foosh_run, "start_workflow")
+    assert r.warnings == []
+    srcs = {h.src for h in r.hops if h.dst.startswith("module.table[")}
+    assert srcs == {API}
+    write = next(h for h in r.hops if h.dst == table("executions"))
+    assert write.breakdown["processing"] == 8.0            # op: write
+    assert r.hops[-1].dst == API and "response leg" in r.hops[-1].evidence
+
+
+def test_run_workflow_costs_parallel_as_max_and_fanout_once(foosh_run):
+    from conftest import result
+    r = result(foosh_run, "run_workflow_3_nodes")
+    assert r.warnings == []
+    assert r.shape["parallel_groups"] == 1 and r.shape["fanout_copies"] == 3
+    critical = sum(h.latency_ms for h in r.hops if h.on_critical_path)
+    assert r.total_ms == pytest.approx(critical)
+    assert r.shape["parallel_savings_ms"] > 0
+    off = [h for h in r.hops if not h.on_critical_path]
+    assert {h.dst for h in off} >= {worker("html_template")}
+    # every worker invocation is attributed to the state machine, not the previous worker
+    for h in r.hops:
+        if h.dst.startswith("module.worker["):
+            assert h.src == SFN, (h.src, h.dst)

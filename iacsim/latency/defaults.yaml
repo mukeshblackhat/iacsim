@@ -11,6 +11,7 @@ meta:
 distance:
   same_az: 0.3
   cross_az: 1.0
+  same_region_unknown_az: 0.5     # one side spans AZs (ALB) or is regional (DynamoDB, S3, Lambda)
   cross_region_default: 120       # fallback when a pair is missing below
   cross_region:                   # one-way, ms; keys are sorted "a/b"
     ap-south-1/us-east-1: 190

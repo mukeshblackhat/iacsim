@@ -8,7 +8,7 @@ dump so old files stay readable after upgrades.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import Any
 
@@ -138,6 +138,15 @@ class InfraGraph:
     def nodes_of_kind(self, kind: NodeKind) -> list[Node]:
         return [n for n in self.nodes.values() if n.kind == kind]
 
+    def display_name(self, node_id: str) -> str:
+        """A node's label when no other node shares it, else a shortened id:
+        `module.compute.aws_instance.this["a"]` → `compute.instance["a"]`."""
+        node = self.nodes.get(node_id)
+        if node and node.label and sum(1 for n in self.nodes.values() if n.label == node.label) == 1:
+            return node.label
+        short = node_id.replace("module.", "").replace(".aws_", ".")
+        return short[:-5] if short.endswith(".this") else short.replace(".this[", "[")
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
@@ -146,15 +155,21 @@ class InfraGraph:
 
 @dataclass
 class Step:
-    """One step in a request path. Exactly one of `node`, `parallel`, `fanout` is set.
+    """One step in a request path. Exactly one of `node`, `parallel`, `fanout`, `wait_ms` is set.
 
-    node:     visit this node (sequential)
+    node:     visit this node (sequential). `op` overrides the edge's operation
+              ("read" | "write" | "publish" …) so a scenario can say "this step
+              writes" on an edge inference tagged as a read.
     parallel: run each branch (a list of Steps) concurrently; cost = max(branches)
-    fanout:   visit `node` `count` times concurrently (Step Functions Map, SQS batch)
+    fanout:   visit `node` `count` times concurrently (Step Functions Map, SQS batch);
+              costed once, the count is recorded in Result.shape
+    wait_ms:  a deliberate pause (Step Functions Wait state); no hop, pure cost
     """
     node: str | None = None
-    parallel: list[list["Step"]] | None = None
+    parallel: list[list[Step]] | None = None
     fanout: tuple[str, int] | None = None
+    wait_ms: float | None = None
+    op: str | None = None
     note: str | None = None
 
 
@@ -205,6 +220,10 @@ class Result:
     walker: str
     percentiles: dict[str, float] = field(default_factory=dict)   # {"p50": .., "p99": ..} from monte_carlo
     samples: int | None = None
+    # Layer A3 — the *shape* of the path, independent of any latency number:
+    # {"hop_count", "sequential_hops", "parallel_groups", "parallel_savings_ms", "fanout_copies", "wait_ms"}
+    shape: dict[str, float] = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -223,6 +242,11 @@ class Findings:
     total_ms: float
     findings: list[Finding]
     profile_sources: list[str]
+    description: str | None = None
+    source: str = "declared"             # "declared" | "inferred"
+    hops: list[HopResult] = field(default_factory=list)   # in path order, for the hop table
+    shape: dict[str, float] = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
     schema_version: str = SCHEMA_VERSION
 
 

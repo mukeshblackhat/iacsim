@@ -1,1 +1,1 @@
-from iacsim.scenarios import yaml_file, inferred  # noqa: F401
+from iacsim.scenarios import inferred, yaml_file  # noqa: F401
