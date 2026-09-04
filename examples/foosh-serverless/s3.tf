@@ -1,7 +1,8 @@
 # Workflow outputs (generated images / videos). Public-read, 7-day lifecycle on downloads/.
+# The "-new" suffix is the real bucket name (config/environments/staging.json).
 
 resource "aws_s3_bucket" "outputs" {
-  bucket = "${local.prefix}-outputs-${local.suffix}"
+  bucket = "${local.prefix}-outputs-${local.suffix}-new"
 }
 
 resource "aws_s3_bucket_versioning" "outputs" {

@@ -2,13 +2,14 @@
 
 A "brief" is one scenario rendered as ordered sections:
 
-    header          scenario, description, source, total, profile rungs
+    header          scenario, description, source, total (+ p50/p95/p99 when sampled), profile rungs
     where           "Where the time goes" — A1 / A2 / A3 shares with a bar
     bottlenecks     top-N per_node lines
     recommendations
     hops            the hop table — top-N by ms (path index kept), or every hop
                     in path order with --all-hops
     critical_path   only when the scenario has a parallel group
+    tail_risk       only when the walker sampled — which hops drive p99 − p50
     warnings
 
 Both reporters build the same `Section` list from a Findings and differ only
@@ -60,12 +61,14 @@ class BriefBuilder:
             self._recommendations(groups.get("per_hop", []), groups.get("recommendations", [])),
             self._hops(f.hops),
             self._critical_path(groups.get("critical_path", [])),
+            self._tail_risk(groups.get("tail_risk", [])),
             self._warnings(f.warnings),
         ]
         return Brief(
             title=f.scenario,
             subtitle=f.description,
             meta=[("source", f.source), ("total", f"{f.total_ms:,.1f} ms"),
+                  ("tail", self._percentiles(f)), ("samples", f"{f.samples:,}" if f.samples else ""),
                   ("profile", " → ".join(f.profile_sources)), ("shape", self._shape(f.shape))],
             sections=[s for s in sections if s.rows],
         )
@@ -108,12 +111,15 @@ class BriefBuilder:
             shown.sort(key=lambda ih: ih[0])
             intro = (f"top {len(shown)} of {len(hops)} hops by ms, in path order — --all-hops for every hop"
                      if len(hops) > len(shown) else f"all {len(hops)} hops in path order")
-        s = Section("Hops", ["#", "", "hop", "ms", "breakdown"], intro=intro)
+        sampled = any(h.percentiles for h in hops)
+        columns = ["#", "", "hop", "ms", *(["p99"] if sampled else []), "breakdown"]
+        s = Section("Hops", columns, intro=intro)
         for i, h in shown:
             marker = "" if h.on_critical_path else "·"
             name = f"{self.name(h.src)}  (wait)" if h.src == h.dst else f"{self.name(h.src)} → {self.name(h.dst)}"
             breakdown = " ".join(f"{k}={v:g}" for k, v in h.breakdown.items())
-            s.rows.append(Row([str(i), marker, name, f"{h.latency_ms:,.1f}", breakdown],
+            p99 = [f"{h.percentiles['p99']:,.1f}" if h.percentiles else ""] if sampled else []
+            s.rows.append(Row([str(i), marker, name, f"{h.latency_ms:,.1f}", *p99, breakdown],
                               note=clip(h.evidence), note_col=2))
         return s
 
@@ -122,6 +128,20 @@ class BriefBuilder:
         for b in branches:
             s.rows.append(Row([b.subject, f"{b.latency_ms:,.1f}", b.detail]))
         return s
+
+    def _tail_risk(self, lines: list[Finding]) -> Section:
+        s = Section("Tail risk (p99 − p50)", ["hop", "p99 − p50", "share of spread", "why"])
+        for t in lines:
+            s.rows.append(Row([self.name(t.subject) if " → " in t.subject else t.subject,
+                               f"{t.latency_ms:,.1f}", f"{t.share:.0%}", t.detail]))
+        return s
+
+    @staticmethod
+    def _percentiles(f: Findings) -> str:
+        p = f.percentiles
+        if not p:
+            return ""
+        return " · ".join(f"{k} {p[k]:,.1f}" for k in ("p50", "p95", "p99") if k in p) + " ms"
 
     @staticmethod
     def _warnings(warnings: list[str]) -> Section:

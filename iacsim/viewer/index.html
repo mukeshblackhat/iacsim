@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>iacsim viewer</title>
+<style>
+  :root {
+    --bg: #fafaf8; --fg: #1f2328; --muted: #6b7280; --panel: #ffffff; --line: #d0d7de;
+    --lane: #f1f3f5; --lane-line: #dfe3e8;
+    --compute: #4f8bd6; --datastore: #d68a2e; --lb: #7c5cd6; --gateway: #2e9e6b; --queue: #c94f7c;
+    --orchestrator: #b05cd6; --cdn: #3ca6b8; --network: #9aa3ad; --external: #8b8f94;
+    --distance: #4f8bd6; --processing: #2e9e6b; --cold_start: #e07b1f; --other: #9aa3ad;
+    --accent: #e0245e; --faded: 0.18;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0f1216; --fg: #e6e8eb; --muted: #9aa3ad; --panel: #171b21; --line: #2b323b;
+            --lane: #151920; --lane-line: #232a33; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--fg); }
+  header { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { font-size: 15px; margin: 0 8px 0 0; }
+  header label { color: var(--muted); }
+  select, button, input { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; }
+  #totals { font-variant-numeric: tabular-nums; }
+  #totals b { font-size: 15px; }
+  main { display: grid; grid-template-columns: 1fr 340px; height: calc(100vh - 52px); }
+  #stage { overflow: auto; }
+  svg { display: block; min-width: 100%; }
+  aside { border-left: 1px solid var(--line); background: var(--panel); padding: 12px 14px; overflow: auto; }
+  aside h2 { font-size: 13px; margin: 0 0 6px; }
+  aside h3 { font-size: 12px; color: var(--muted); margin: 14px 0 4px; text-transform: uppercase; letter-spacing: .04em; }
+  aside dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; margin: 0; }
+  aside dt { color: var(--muted); }
+  aside dd { margin: 0; word-break: break-all; }
+  aside .ev { color: var(--muted); font-size: 12px; margin: 2px 0 6px; }
+  aside code { font-size: 12px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 12px; color: var(--muted); }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; background: var(--c); }
+  .legend .edge::before { height: 3px; border-radius: 2px; vertical-align: 2px; }
+  #picker { display: none; padding: 40px; text-align: center; color: var(--muted); }
+  #picker.show { display: block; }
+  .lane { fill: var(--lane); stroke: var(--lane-line); }
+  .lane-label { fill: var(--muted); font-size: 12px; font-weight: 600; }
+  .az-label { fill: var(--muted); font-size: 10px; }
+  .node { cursor: pointer; }
+  .node rect { stroke: var(--panel); stroke-width: 1.5; rx: 6; }
+  .node text { fill: #fff; font-size: 11px; pointer-events: none; }
+  .node .sub { font-size: 9px; opacity: .85; }
+  .edge { fill: none; cursor: pointer; stroke-linecap: round; }
+  .edge.hit { stroke: transparent; stroke-width: 12px; }
+  .faded { opacity: var(--faded); }
+  .path { stroke: var(--accent) !important; }
+  .badge circle { fill: var(--accent); }
+  .badge text { fill: #fff; font-size: 10px; font-weight: 700; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+  .selected rect { stroke: var(--accent); stroke-width: 3; }
+</style>
+</head>
+<body>
+<header>
+  <h1>iacsim</h1>
+  <label>scenario <select id="scenario"><option value="">— none —</option></select></label>
+  <span id="totals"></span>
+  <label><input type="checkbox" id="network"> show network nodes</label>
+  <button id="clear" title="Escape">clear selection</button>
+  <div class="legend" id="legend"></div>
+</header>
+<div id="picker">
+  <p>Could not load <code>report.json</code> / <code>graph.json</code> from this directory
+     (browsers block <code>fetch</code> on <code>file://</code>). Pick the files instead:</p>
+  <input type="file" id="files" multiple accept=".json">
+</div>
+<main>
+  <div id="stage"><svg id="svg"></svg></div>
+  <aside id="panel"><h2>Click a node or an edge</h2>
+    <p class="ev">Nodes are placed in region / AZ swimlanes, left to right in request order.
+    Edge width is the expected latency; colour is the dominant cost category.
+    Pick a scenario to overlay its path with hop numbers.</p></aside>
+</main>
+<script>
+(() => {
+  const KINDS = ["compute","datastore","lb","gateway","queue","orchestrator","cdn","network","external"];
+  const CATS = ["distance","processing","cold_start","other"];
+  const svgNS = "http://www.w3.org/2000/svg";
+  const $ = (s) => document.querySelector(s);
+  let graph = null, report = null, showNetwork = false, selected = null, scenario = null;
+
+  // ---------------------------------------------------------------- loading
+  async function load() {
+    const get = async (f) => { const r = await fetch(f, {cache: "no-store"}); if (!r.ok) throw new Error(f); return r.json(); };
+    try { report = await get("report.json"); graph = report.graph; }
+    catch (e) { try { graph = await get("graph.json"); } catch (e2) { $("#picker").classList.add("show"); return; } }
+    boot();
+  }
+  $("#files").addEventListener("change", async (ev) => {
+    for (const file of ev.target.files) {
+      const doc = JSON.parse(await file.text());
+      if (doc.scenarios) { report = doc; graph = doc.graph; } else if (doc.nodes) graph = doc;
+    }
+    if (graph) { $("#picker").classList.remove("show"); boot(); }
+  });
+
+  function boot() {
+    const sel = $("#scenario");
+    sel.innerHTML = '<option value="">— none —</option>';
+    for (const s of (report ? report.scenarios : [])) {
+      const o = document.createElement("option"); o.value = s.name; o.textContent = `${s.name}  (${s.total_ms.toFixed(1)} ms)`; sel.appendChild(o);
+    }
+    sel.onchange = () => { scenario = report && report.scenarios.find(s => s.name === sel.value) || null; draw(); };
+    $("#network").onchange = (e) => { showNetwork = e.target.checked; draw(); };
+    $("#clear").onclick = () => { selected = null; draw(); };
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") { selected = null; draw(); } });
+    legend();
+    draw();
+  }
+
+  function legend() {
+    const el = $("#legend"); el.innerHTML = "";
+    for (const k of KINDS) { const s = document.createElement("span"); s.style.setProperty("--c", `var(--${k})`); s.textContent = k; el.appendChild(s); }
+    for (const c of CATS) { const s = document.createElement("span"); s.className = "edge"; s.style.setProperty("--c", `var(--${c})`); s.textContent = c; el.appendChild(s); }
+  }
+
+  // ---------------------------------------------------------------- names + layout
+  function displayName(id) {
+    const n = graph.nodes[id]; if (!n) return id;
+    if (n.label && Object.values(graph.nodes).filter(x => x.label === n.label).length === 1) return n.label;
+    let s = id.replace(/module\./g, "").replace(/\.aws_/g, ".");
+    return s.endsWith(".this") ? s.slice(0, -5) : s.replace(".this[", "[");
+  }
+  function visibleNodes() {
+    return Object.values(graph.nodes).filter(n => showNetwork || n.kind !== "network");
+  }
+  function visibleEdges(ids) {
+    return graph.edges.filter(e => ids.has(e.src) && ids.has(e.dst) && e.src !== e.dst);
+  }
+  function depths(nodes, edges) {
+    // longest-path depth from sources, bounded so cycles cannot spin
+    const d = {}; nodes.forEach(n => d[n.id] = 0);
+    const out = {}; edges.forEach(e => (out[e.src] = out[e.src] || []).push(e.dst));
+    for (let round = 0; round < nodes.length; round++) {
+      let changed = false;
+      for (const e of edges) if (d[e.dst] < d[e.src] + 1 && d[e.src] + 1 < nodes.length) { d[e.dst] = d[e.src] + 1; changed = true; }
+      if (!changed) break;
+    }
+    return d;
+  }
+  const COL = 190, ROW = 64, NODE_W = 150, NODE_H = 40, PAD_L = 110, PAD_T = 30;
+  function layout() {
+    const nodes = visibleNodes(), ids = new Set(nodes.map(n => n.id)), edges = visibleEdges(ids);
+    const depth = depths(nodes, edges);
+    const lanes = new Map();   // region → [nodes]
+    for (const n of nodes) {
+      const r = n.kind === "external" ? "internet" : (n.placement.region || "unplaced");
+      if (!lanes.has(r)) lanes.set(r, []); lanes.get(r).push(n);
+    }
+    const order = ["internet", ...[...lanes.keys()].filter(k => k !== "internet" && k !== "unplaced").sort(), "unplaced"].filter(k => lanes.has(k));
+    const pos = {}, bands = []; let y = PAD_T, maxX = 0;
+    for (const region of order) {
+      const members = lanes.get(region).sort((a, b) => (a.placement.az || "") < (b.placement.az || "") ? -1 : 1);
+      const rows = {};                       // depth → next free row
+      let laneRows = 1;
+      for (const n of members) {
+        const dx = depth[n.id], r = rows[dx] || 0; rows[dx] = r + 1; laneRows = Math.max(laneRows, r + 1);
+        pos[n.id] = { x: PAD_L + dx * COL, y: y + 26 + r * ROW, n };
+        maxX = Math.max(maxX, PAD_L + dx * COL + NODE_W);
+      }
+      const h = 26 + laneRows * ROW + 6;
+      bands.push({ region, y, h, azs: [...new Set(members.map(m => m.placement.az).filter(Boolean))] });
+      y += h + 12;
+    }
+    return { pos, bands, edges, width: maxX + 80, height: y + 20 };
+  }
+
+  // ---------------------------------------------------------------- drawing
+  const el = (tag, attrs = {}, parent) => { const e = document.createElementNS(svgNS, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); if (parent) parent.appendChild(e); return e; };
+  function dominant(breakdown) {
+    let best = "other", bv = -1;
+    for (const [k, v] of Object.entries(breakdown || {})) { const key = CATS.includes(k) ? k : "other"; if (v > bv) { bv = v; best = key; } }
+    return best;
+  }
+  function scenarioHops() {
+    if (!scenario) return [];
+    return scenario.hops.map((h, i) => ({ ...h, index: i + 1 }));
+  }
+  function draw() {
+    const svg = $("#svg"); svg.innerHTML = "";
+    if (!graph) return;
+    const L = layout();
+    svg.setAttribute("width", L.width); svg.setAttribute("height", L.height);
+    const defs = el("defs", {}, svg);
+    for (const c of [...CATS, "path"]) {
+      const m = el("marker", { id: `arrow-${c}`, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" }, defs);
+      el("path", { d: "M0,0 L10,5 L0,10 z", fill: c === "path" ? "var(--accent)" : `var(--${c})` }, m);
+    }
+    for (const b of L.bands) {
+      el("rect", { class: "lane", x: 8, y: b.y, width: L.width - 16, height: b.h, rx: 8 }, svg);
+      el("text", { class: "lane-label", x: 18, y: b.y + 16 }, svg).textContent = b.region;
+      if (b.azs.length) el("text", { class: "az-label", x: 18, y: b.y + 30 }, svg).textContent = b.azs.join(" · ");
+    }
+    const hops = scenarioHops();
+    const onPath = new Set(hops.map(h => `${h.src}→${h.dst}`)), pathNodes = new Set(hops.flatMap(h => [h.src, h.dst]));
+    const maxLat = Math.max(1, ...L.edges.map(e => (e.latency && e.latency.expected) || 0));
+    const g = el("g", {}, svg);
+    for (const e of L.edges) {
+      const a = L.pos[e.src], b = L.pos[e.dst]; if (!a || !b) continue;
+      const d = curve(a, b), cat = dominant(e.latency && e.latency.breakdown);
+      const w = 1 + 6 * (((e.latency && e.latency.expected) || 0) / maxLat);
+      const inPath = onPath.has(`${e.src}→${e.dst}`) || onPath.has(`${e.dst}→${e.src}`);
+      const cls = ["edge", inPath ? "path" : "", scenario && !inPath ? "faded" : "", selected && selected.edge === e ? "path" : ""].join(" ");
+      el("path", { d, class: cls, stroke: `var(--${cat})`, "stroke-width": w, "marker-end": `url(#arrow-${inPath ? "path" : cat})` }, g);
+      const hit = el("path", { d, class: "edge hit" }, g);
+      hit.addEventListener("click", () => { selected = { edge: e }; draw(); });
+    }
+    for (const [id, p] of Object.entries(L.pos)) {
+      const n = p.n, node = el("g", { class: ["node", scenario && !pathNodes.has(id) ? "faded" : "", selected && selected.node === n ? "selected" : ""].join(" "), transform: `translate(${p.x},${p.y})` }, svg);
+      el("rect", { width: NODE_W, height: NODE_H, fill: `var(--${n.kind})` }, node);
+      const t = el("text", { x: 8, y: 16 }, node); t.textContent = clip(displayName(id), 22);
+      const s = el("text", { x: 8, y: 31, class: "sub" }, node); s.textContent = `${n.subtype}${n.placement.az ? " · " + n.placement.az : ""}`;
+      node.addEventListener("click", () => { selected = { node: n }; draw(); });
+    }
+    for (const h of hops) {                    // hop number badges at the midpoint of each path edge
+      const a = L.pos[h.src], b = L.pos[h.dst]; if (!a || !b) continue;
+      const m = midpoint(a, b, h.index), badge = el("g", { class: "badge", transform: `translate(${m.x},${m.y})` }, svg);
+      el("circle", { r: 9 }, badge); el("text", {}, badge).textContent = h.index;
+    }
+    totals(); panel();
+  }
+  function clip(s, n) { return s.length > n ? s.slice(0, n - 1) + "…" : s; }
+  function curve(a, b) {
+    const x1 = a.x + NODE_W, y1 = a.y + NODE_H / 2, x2 = b.x, y2 = b.y + NODE_H / 2;
+    if (a === b) return `M${x1},${y1} c 30,-30 30,30 0,0`;
+    if (x2 >= x1) { const c = (x2 - x1) / 2; return `M${x1},${y1} C${x1 + c},${y1} ${x2 - c},${y2} ${x2},${y2}`; }
+    // backwards: loop around below
+    const dy = 40; return `M${a.x + NODE_W / 2},${a.y + NODE_H} C${a.x + NODE_W / 2},${a.y + NODE_H + dy} ${b.x + NODE_W / 2},${b.y + NODE_H + dy} ${b.x + NODE_W / 2},${b.y + NODE_H}`;
+  }
+  function midpoint(a, b, i) {
+    if (a === b) return { x: a.x + NODE_W + 14, y: a.y - 4 + (i % 3) * 10 };
+    return { x: (a.x + NODE_W + b.x) / 2, y: (a.y + b.y) / 2 + NODE_H / 2 - 12 + (i % 4) * 6 };
+  }
+  function totals() {
+    const t = $("#totals");
+    if (!scenario) { t.textContent = ""; return; }
+    const p = scenario.percentiles || {};
+    t.innerHTML = `<b>${scenario.total_ms.toFixed(1)} ms</b> ${p.p50 !== undefined ? `· p50 ${p.p50.toFixed(1)} · p95 ${(p.p95 || 0).toFixed(1)} · p99 ${p.p99.toFixed(1)} ms` : ""} · ${scenario.hops.length} hops`;
+  }
+
+  // ---------------------------------------------------------------- side panel
+  const esc = (s) => String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  function dl(pairs) { return "<dl>" + pairs.filter(([, v]) => v !== undefined && v !== null && v !== "").map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("") + "</dl>"; }
+  function breakdownText(b) { return Object.entries(b || {}).map(([k, v]) => `${k} ${Number(v).toFixed(1)}`).join(" · "); }
+  function panel() {
+    const p = $("#panel");
+    if (selected && selected.node) {
+      const n = selected.node, inc = graph.edges.filter(e => e.dst === n.id), out = graph.edges.filter(e => e.src === n.id);
+      p.innerHTML = `<h2>${esc(displayName(n.id))}</h2><code>${esc(n.id)}</code>` +
+        dl([["kind", `${n.kind} / ${n.subtype}`], ["region", n.placement.region], ["az", n.placement.az], ["vpc", n.placement.vpc && displayName(n.placement.vpc)], ...Object.entries(n.attrs || {})]) +
+        `<h3>incoming (${inc.length})</h3>` + inc.slice(0, 40).map(edgeLine).join("") +
+        `<h3>outgoing (${out.length})</h3>` + out.slice(0, 40).map(edgeLine).join("");
+    } else if (selected && selected.edge) {
+      const e = selected.edge;
+      p.innerHTML = `<h2>${esc(displayName(e.src))} → ${esc(displayName(e.dst))}</h2>` +
+        dl([["kind", e.kind], ["rule", e.rule], ["confidence", e.confidence], ["expected", e.latency ? `${e.latency.expected.toFixed(1)} ms one-way` : "—"], ["breakdown", breakdownText(e.latency && e.latency.breakdown)]]) +
+        `<h3>evidence</h3><div class="ev">${esc(e.evidence)}</div>`;
+    } else if (scenario) {
+      p.innerHTML = `<h2>${esc(scenario.name)}</h2><div class="ev">${esc(scenario.description || "")}</div>` +
+        dl([["total", `${scenario.total_ms.toFixed(1)} ms`], ["source", scenario.source], ["shape", shapeText(scenario.shape)]]) +
+        `<h3>hops</h3>` + scenario.hops.map((h, i) => `<div><b>${i + 1}</b> ${esc(displayName(h.src))} → ${esc(displayName(h.dst))} <b>${h.latency_ms.toFixed(1)}</b>${h.percentiles && h.percentiles.p99 !== undefined ? ` <span class="ev">p99 ${h.percentiles.p99.toFixed(1)}</span>` : ""}${h.on_critical_path ? "" : " ·"}<div class="ev">${esc(h.evidence)}</div></div>`).join("") +
+        recs(scenario);
+    } else {
+      p.innerHTML = `<h2>Click a node or an edge</h2><p class="ev">Nodes are placed in region / AZ swimlanes, left to right in request order. Edge width is the expected latency; colour is the dominant cost category. Pick a scenario to overlay its path with hop numbers.</p>` +
+        dl([["nodes", Object.keys(graph.nodes).length], ["edges", graph.edges.length], ["format", graph.source_format], ["profile", report && report.profile.sources.join(" → ")]]);
+    }
+  }
+  function edgeLine(e) { return `<div>${esc(displayName(e.src))} → ${esc(displayName(e.dst))} <span class="ev">${e.kind}${e.latency ? " · " + e.latency.expected.toFixed(1) + " ms" : ""}</span></div>`; }
+  function shapeText(s) { if (!s) return ""; const parts = [`${s.hop_count} hops`]; if (s.parallel_groups) parts.push(`${s.parallel_groups} parallel group(s) saving ${Number(s.parallel_savings_ms).toFixed(1)} ms`); if (s.fanout_copies) parts.push(`fan-out ×${s.fanout_copies}`); return parts.join("; "); }
+  function recs(s) {
+    const r = (s.findings && s.findings.recommendations) || []; if (!r.length) return "";
+    return `<h3>recommendations</h3>` + r.map(f => `<div><b>${esc(f.subject)}</b> <span class="ev">saves ~${f.latency_ms.toFixed(0)} ms</span></div>`).join("");
+  }
+  load();
+})();
+</script>
+</body>
+</html>

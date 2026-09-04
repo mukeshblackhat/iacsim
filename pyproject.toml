@@ -36,7 +36,7 @@ build-backend = "setuptools.build_meta"
 include = ["iacsim*"]
 
 [tool.setuptools.package-data]
-iacsim = ["latency/defaults.yaml"]
+iacsim = ["latency/defaults.yaml", "viewer/index.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

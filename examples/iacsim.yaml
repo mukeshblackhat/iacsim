@@ -14,10 +14,11 @@ latency:
   profiles: [defaults]          # add ./profiles/team.yaml, ./calibrated.yaml ...
   rules: [distance, processing, cold_start]
 simulation:
-  walker: expected_value        # or monte_carlo (M6)
-  samples: 10000
+  walker: expected_value        # or monte_carlo → p50/p95/p99
+  samples: 10000                # monte_carlo only
+  seed: null                    # monte_carlo only; set for reproducible runs
 analysis:
-  analyzers: [per_hop, per_node, per_category, critical_path, recommendations]
+  analyzers: [per_hop, per_node, per_category, critical_path, recommendations, tail_risk]   # tail_risk only speaks when sampled
   top_n: 10
 report:
   outputs: [text, json]

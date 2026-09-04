@@ -9,16 +9,20 @@ graph viewer (M6). Schema version 2:
       "scenarios": [
         {
           "name", "description", "source" ("declared" | "inferred"),
-          "total_ms",
+          "total_ms",                        # the mean when sampled
+          "percentiles": {p50, p90, p95, p99}, # {} unless --walker monte_carlo
+          "samples":  N | null,
           "shape":    {hop_count, sequential_hops, parallel_groups, parallel_savings_ms, fanout_copies, wait_ms},
           "profile":  {"sources": [...]},
-          "hops":     [{src, dst, label, latency_ms, breakdown, evidence, on_critical_path, group}],
+          "hops":     [{src, dst, label, latency_ms, breakdown, evidence, on_critical_path, group,
+                        percentiles: {p50, p99} | {}}],
           "findings": {
             "per_hop":         [Finding...],   # subject = hop label
             "per_node":        [Finding...],   # subject = node id
             "per_category":    [Finding...],   # subject = distance|processing|cold_start|wait|service|parallel_savings|hops|fanout
             "critical_path":   [Finding...],   # only when parallel_groups > 0
-            "recommendations": [Finding...]    # latency_ms = estimated saving
+            "recommendations": [Finding...],   # latency_ms = estimated saving
+            "tail_risk":       [Finding...]    # only when sampled; latency_ms = p99 − p50
           },
           "warnings": [...]
         }

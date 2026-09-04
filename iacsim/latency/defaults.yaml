@@ -21,6 +21,13 @@ distance:
     ap-southeast-1/us-east-1: 215
   internet_to_edge: 20            # user → first AWS hop
 
+# Spread around the numbers above — only the Monte-Carlo walker reads these.
+# σ is the lognormal's log-space standard deviation (0.2 ≈ ±20 % most of the time).
+# `iacsim calibrate` (M7) fills these from measured p50/p99 alongside the means.
+variance:
+  distance_sigma: 0.2
+  processing_sigma: 0.3
+
 processing:
   lambda:
     defaults: { warm: 5, cold: 400, cold_prob: 0.05 }

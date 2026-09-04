@@ -129,3 +129,48 @@ def test_recommendations_cold_start_and_waits():
     assert titles[0].startswith("replace Step Functions Wait")
     assert any(t.startswith("provisioned concurrency on fn") for t in titles)
     assert len(findings) <= 5
+
+
+# ------------------------------------------------------------------ tail_risk (M6)
+
+def _sampled_result():
+    from iacsim.core.models import HopResult, Result
+    hops = [
+        HopResult("internet", "gw", 50.0, {"distance": 40.0, "processing": 10.0}, "entry",
+                  percentiles={"p50": 48.0, "p99": 70.0}),
+        HopResult("gw", "fn", 26.0, {"distance": 1.0, "processing": 5.0, "cold_start": 20.0}, "invoke",
+                  percentiles={"p50": 6.0, "p99": 405.0}),
+        HopResult("fn", "table", 9.0, {"distance": 1.0, "processing": 4.0}, "read",
+                  percentiles={"p50": 8.5, "p99": 14.0}),
+    ]
+    return Result("t", 85.0, hops, "monte_carlo", percentiles={"p50": 62.0, "p90": 90.0, "p95": 440.0, "p99": 480.0},
+                  samples=1000, shape={"hop_count": 3})
+
+
+def _tiny_graph():
+    from iacsim.core.models import InfraGraph, Node, NodeKind, Placement
+    g = InfraGraph()
+    us = Placement(region="us-east-1")
+    g.add_node(Node("internet", NodeKind.EXTERNAL, "internet"))
+    g.add_node(Node("gw", NodeKind.GATEWAY, "api_gateway", us))
+    g.add_node(Node("fn", NodeKind.COMPUTE, "lambda", us))
+    g.add_node(Node("table", NodeKind.DATASTORE, "dynamodb", us))
+    return g
+
+
+def test_tail_risk_is_silent_without_samples():
+    from iacsim.core.interfaces import ANALYZERS
+    from iacsim.core.models import Result
+    r = Result("t", 10.0, [], "expected_value")
+    assert ANALYZERS.get("tail_risk")().analyse(r, _tiny_graph()) == []
+
+
+def test_tail_risk_names_the_cold_start_as_the_biggest_spread():
+    from iacsim.core.interfaces import ANALYZERS
+    findings = ANALYZERS.get("tail_risk")().analyse(_sampled_result(), _tiny_graph())
+    assert findings[0].subject == "p99 − p50" and findings[0].latency_ms == pytest.approx(418.0)
+    assert "1,000 samples" in findings[0].detail
+    top = findings[1]
+    assert top.subject == "gw → fn" and top.latency_ms == pytest.approx(399.0)
+    assert "cold start" in top.detail and top.refs == ["gw → fn"] and not top.additive
+    assert [f.subject for f in findings[2:]] == ["internet → gw", "fn → table"]

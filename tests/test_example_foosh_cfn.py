@@ -14,16 +14,10 @@ from iacsim.differ import diff_graphs
 
 EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 
-# The Terraform twin was written from the CDK *source* and picked its own
-# names for four resources; the real template uses the names from
-# config/environments/staging.json. Same resource, different label.
-LABEL_GAP = {
-    # terraform twin label                        real (CDK) label
-    "WorkflowsStaging":                           "AsyncWorkflowsStaging",
-    "ExecutionsStaging":                          "WorkflowExecutionsStagingSF",
-    "async-workflow-html-template-staging":       "async-workflow-html-template-processor-staging",
-    "async-workflow-outputs-staging":             "async-workflow-outputs-staging-new",
-}
+# M6 aligned the twin's four resource names with config/environments/staging.json,
+# so labels now match one-to-one. Kept as a (now empty) map so the edge tests
+# below read the same way if a future rename reopens a gap.
+LABEL_GAP: dict[str, str] = {}
 # The twin gives every Lambda env vars for all ten tables; the real stack only
 # passes seven (+ USER_CREDITS, which has no table) and reaches the other
 # three through IAM alone. Same edge, different evidence → different kind.
@@ -56,13 +50,12 @@ def test_parses_cleanly_with_the_same_shape_as_the_twin(foosh, foosh_cfn):
     assert all(n.placement.region == "us-east-1" for n in cfn_graph.nodes.values() if n.kind != NodeKind.EXTERNAL)
 
 
-def test_node_diff_by_label_is_exactly_the_naming_gap(foosh, foosh_cfn):
+def test_node_diff_by_label_is_empty(foosh, foosh_cfn):
+    """Every resource in the real template has a twin with the same label — and vice versa."""
     tf, cfn = foosh[0], foosh_cfn[0]
     diff = diff_graphs(tf, cfn, align_by="label")
-    tl, cl = labels(tf), labels(cfn)
-    assert sorted(tl[i] for i in diff.nodes_removed) == sorted(LABEL_GAP)
-    assert sorted(cl[i] for i in diff.nodes_added) == sorted(LABEL_GAP.values())
-    assert diff.nodes_moved == []
+    assert diff.nodes_removed == [] and diff.nodes_added == [] and diff.nodes_moved == []
+    assert sorted(labels(tf).values()) == sorted(labels(cfn).values())
 
 
 def test_high_confidence_edges_match_exactly(foosh, foosh_cfn):

@@ -6,6 +6,7 @@ Precedence: CLI flags > iacsim.yaml in the target directory > DEFAULTS.
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -39,10 +40,11 @@ DEFAULTS: dict[str, Any] = {
     },
     "simulation": {
         "walker": "expected_value",
-        "samples": 10_000,
+        "samples": 10_000,           # monte_carlo only
+        "seed": None,                # monte_carlo only; set for reproducible runs
     },
     "analysis": {
-        "analyzers": ["per_hop", "per_node", "per_category", "critical_path", "recommendations"],
+        "analyzers": ["per_hop", "per_node", "per_category", "critical_path", "recommendations", "tail_risk"],
         "top_n": 10,
     },
     "report": {
@@ -102,4 +104,6 @@ def _deep_merge(base: dict, override: dict) -> dict:
 
 
 def _deep_copy(d: dict) -> dict:
-    return _deep_merge({}, d)
+    # A real deep copy: `_deep_merge({}, d)` shared the first-level dicts with
+    # DEFAULTS, so `cfg.set("latency.profiles", …)` leaked into every later Config.
+    return copy.deepcopy(d)

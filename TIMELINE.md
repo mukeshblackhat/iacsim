@@ -265,11 +265,75 @@ Legend: ✅ done · 🔨 in progress · ⏳ planned · 🧊 parked
   outside M5: rename the four resources in the Terraform twin to the real
   names so the label diff is empty.
 
+### M6 done (same day, parallel agent)
+- **Shared traversal** (`simulator/traversal.py`): the walk is now planned
+  once (edge selection, ×2 on sync distance, `op` overrides, parallel /
+  fan-out / wait, group labels, shape) and *evaluated* by a backend —
+  `ExpectedBackend` (the M2 numbers, unchanged) or Monte-Carlo. The two
+  walkers cannot drift apart; `expected_value.py` is now 25 lines.
+- **Monte-Carlo walker** (`--walker monte_carlo --samples N --seed S`):
+  distance and processing drawn from a lognormal whose mean is the expected
+  value (`variance.distance_sigma` 0.2 / `variance.processing_sigma` 0.3 in
+  `defaults.yaml`, per-subtype `sigma` wins), cold starts as a coin flip
+  (`cold_prob` × full `cold`), waits exact. Parallel groups take the
+  element-wise max. Reports mean + p50/p90/p95/p99 per scenario and p50/p99
+  per hop. numpy optional (not installed here — the pure-Python `Vec`
+  sampler did 10 000 samples × 6 scenarios in ~4 s). Seeded runs are
+  byte-reproducible.
+- **Actual numbers** (10 000 samples, seed 1):
+  | scenario | mean | p50 | p95 | p99 |
+  |---|---|---|---|---|
+  | classic-web `page_load` | 57.1 | 56.4 | 72.1 | 79.8 |
+  | classic-web-bad `page_load` | 355.4 | 352.7 | 432.1 | 468.5 |
+  | foosh `start_workflow` | 151.2 | 111.6 | 509.7 | 529.3 |
+  | foosh `run_workflow_3_nodes` | 227.3 | 94.3 | 506.0 | 892.6 |
+  | foosh `poll_status` | 107.3 | 66.5 | 465.9 | 479.9 |
+  The Lambda-heavy paths are bimodal exactly as intended: foosh
+  `run_workflow_3_nodes` p99 is 9.5× its p50, and the Tail-risk section names
+  the two 400 ms cold starts (`output_updater`, `parser`) as the drivers.
+  classic-web-bad's tail is only 1.3× — a geography problem, not a variance
+  problem.
+- **`tail_risk` analyzer** (on by default, silent unless sampled): the
+  scenario's p99 − p50, then the top hops by their own p99 − p50 with the
+  likeliest cause (cold start / cross-region variance / service variance),
+  citing the hop. Text/markdown briefs gained a `tail` header line, a `p99`
+  hop column and a "Tail risk" section; `report.json` gained
+  `percentiles`, `samples` and per-hop `percentiles` (schema 2, additive).
+- **Graph viewer** (`iacsim/viewer/index.html`, one self-contained file, no
+  CDN): region / AZ swimlanes, nodes left-to-right in request order, edge
+  width ∝ expected latency and colour = dominant category, click for
+  evidence + breakdown, scenario dropdown overlays the path with hop badges
+  and shows total / p50 / p99, network nodes behind a toggle, dark mode via
+  `prefers-color-scheme`, file picker fallback for `file://`.
+  `iacsim view <target>` runs the pipeline if `report.json` is missing,
+  serves `.iacsim/` on a free port and opens the browser (`--no-open`,
+  `--port`, `--duration` for tests).
+- **CLI tests** (`tests/test_cli.py`, `CliRunner`): every command including
+  `--fail-on-regression` exit 2, `view --no-open --duration`, the M7 stub.
+  `cli.py` coverage 55 % → ~95 %. Found and fixed a real bug on the way:
+  `Config()` shared its first-level dicts with `DEFAULTS`, so a `--profile`
+  set in-process leaked into every later `Config` (`core/config.py` now
+  uses `copy.deepcopy`).
+- **Terraform twin names** now match `config/environments/staging.json`
+  (`name_override` for `AsyncWorkflowsStaging` / `WorkflowExecutionsStagingSF`,
+  `function_name` for `…-html-template-processor-…`, bucket `…-new`), so the
+  label diff against the real CDK template is **empty** — asserted.
+- **`validate`** now prints the profile rungs and warns on scenario steps
+  naming a node no edge touches; `calibrate` exits 1 with an honest message
+  instead of a malformed `typer.Exit`.
+- Tests 115 → 141. Limitations: the Monte-Carlo *mean* of a parallel scenario
+  is higher than the deterministic total (227 vs 184 ms for foosh
+  `run_workflow_3_nodes`) — that is correct (E[max] ≥ max(E)), but the
+  recommendations still work on means; Choice/`Default` handling unchanged
+  from M2; the viewer's layout is a simple layered one (no force-directed
+  physics), fine up to ~50 nodes.
+
 ### Next session
-- Start **M6**: Monte-Carlo walker (`--walker monte_carlo --samples N` →
-  p50/p95/p99, must set `HopResult.group` like the deterministic walker),
-  static graph viewer reading `graph.json` / `report.json`, validation,
-  docs, tests.
+- Start **M7**: `iacsim calibrate` — CloudWatch `MetricSource` filling
+  `processing.<subtype>.per_resource.<id>.{warm, cold, cold_prob, read, write,
+  sigma}` and `variance.*` from Lambda `Duration` / `InitDuration`, DynamoDB
+  `SuccessfulRequestLatency`, RDS `Read/WriteLatency`, ALB
+  `TargetResponseTime`; needs AWS credentials for the Foosh account.
 
 ---
 
@@ -283,7 +347,7 @@ Legend: ✅ done · 🔨 in progress · ⏳ planned · 🧊 parked
 | M3 | Say *why* it's slow | All 4 analyzers on real output + `recommendations`; text/markdown report is a bottleneck brief (A1/A2/A3 bar, top nodes, suggestions with savings, hop table); `report.json` schema 2 | ✅ | 2026-09-04 |
 | M4 | Compare designs | `iacsim diff classic-web classic-web-bad` shows the cross-region DB as the delta (graph-level move, A1 shift, the two RDS hops, co-locate recommendation); `--fail-on-regression` for CI | ✅ | 2026-09-04 |
 | M5 | Read CloudFormation / CDK output | `iacsim graph examples/foosh-cfn` (real `cdk synth` output) produces the same graph as `foosh-serverless` — 30/30 nodes, every difference enumerated and explained in the test | ✅ | 2026-09-04 |
-| M6 | Tail latency + polish | `--walker monte_carlo --samples N` → p50/p95/p99; static graph viewer reading `graph.json`; validation, docs, tests | ⏳ | |
+| M6 | Tail latency + polish | `--walker monte_carlo --samples N --seed S` → p50/p90/p95/p99 + `tail_risk`; `iacsim view` graph viewer; CLI tests (141 total); Terraform twin labels == real CDK labels | ✅ | 2026-09-04 |
 | M7 | Real numbers | `iacsim calibrate` pulls Lambda Duration / InitDuration, DynamoDB latency from CloudWatch into a profile YAML; run against Foosh staging | ⏳ | |
 
 Estimated: M1–M3 ≈ 1 week (demo-able), M0–M6 ≈ 2 weeks, M7 additive.

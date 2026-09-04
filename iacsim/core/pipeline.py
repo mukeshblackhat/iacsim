@@ -108,7 +108,9 @@ def simulate(graph: InfraGraph, scenarios: list[Scenario], cfg: Config, profile:
     """Stage 6. The walker receives `price` so it can cost synthetic hops."""
     walker = WALKERS.get(cfg.get("simulation.walker"))()
     price = make_pricer(graph, profile, cfg)
-    return [walker.run(graph, s, samples=cfg.get("simulation.samples"), price=price) for s in scenarios]
+    return [walker.run(graph, s, price=price, profile=profile,
+                       samples=cfg.get("simulation.samples"), seed=cfg.get("simulation.seed"))
+            for s in scenarios]
 
 
 def analyse(results: list[Result], graph: InfraGraph, profile: Profile, cfg: Config,
@@ -125,6 +127,7 @@ def analyse(results: list[Result], graph: InfraGraph, profile: Profile, cfg: Con
             description=scenario.description if scenario else None,
             source=scenario.source if scenario else "declared",
             hops=result.hops, shape=result.shape, warnings=result.warnings,
+            percentiles=result.percentiles, samples=result.samples,
         ))
     return out
 

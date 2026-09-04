@@ -192,6 +192,10 @@ class Profile:
     distance: dict[str, Any]
     processing: dict[str, Any]
     sources: list[str] = field(default_factory=list)   # profile files merged, in order
+    # Spread around the expected values, used only by the Monte-Carlo walker:
+    # {"distance_sigma": 0.2, "processing_sigma": 0.3} (σ of the lognormal, in log space).
+    # A per-subtype `sigma` inside processing.<subtype>.defaults / per_resource wins.
+    variance: dict[str, Any] = field(default_factory=dict)
 
     def processing_for(self, node: Node) -> dict[str, Any]:
         """per_resource[node.id] → defaults[subtype] → {}"""
@@ -211,6 +215,7 @@ class HopResult:
     evidence: str
     on_critical_path: bool = True
     group: str | None = None             # "parallel1/branch2" when inside a parallel group, else None
+    percentiles: dict[str, float] = field(default_factory=dict)   # {"p50", "p99"} from monte_carlo; empty otherwise
 
     @property
     def label(self) -> str:
@@ -264,6 +269,8 @@ class Findings:
     hops: list[HopResult] = field(default_factory=list)   # in path order, for the hop table
     shape: dict[str, float] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    percentiles: dict[str, float] = field(default_factory=dict)   # {"p50", "p90", "p95", "p99"} when sampled
+    samples: int | None = None
     schema_version: str = SCHEMA_VERSION
 
     def by_analyzer(self) -> dict[str, list[Finding]]:
@@ -280,6 +287,8 @@ class Findings:
             "description": self.description,
             "source": self.source,
             "total_ms": self.total_ms,
+            "percentiles": self.percentiles,
+            "samples": self.samples,
             "shape": self.shape,
             "profile": {"sources": self.profile_sources},
             "hops": [asdict(h) | {"label": h.label} for h in self.hops],

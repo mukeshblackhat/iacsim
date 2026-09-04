@@ -1,12 +1,13 @@
 """`iacsim` command line.
 
-    iacsim run   ./infra [--profile p.yaml] [--walker monte_carlo] [--format terraform]
-                         [--all-hops] [-o text -o json -o markdown]
+    iacsim run   ./infra [--profile p.yaml] [--walker monte_carlo --samples N --seed S]
+                         [--format terraform] [--all-hops] [-o text -o json -o markdown]
     iacsim graph ./infra                 dump graph.json only (M1 milestone check)
     iacsim diff  ./before ./after        compare two snapshots
                  [--fail-on-regression 50ms|10%] [--scenario NAME] [--align-by id|label]
                  [-o text -o json -o markdown]   exit 2 when a total grows past the threshold
     iacsim validate ./infra              parse + normalise + check scenarios.yaml, no simulation
+    iacsim view  ./infra [--port N] [--no-open]   serve the graph viewer for .iacsim/report.json
     iacsim calibrate --out p.yaml        (M7) CloudWatch → profile
     iacsim plugins                       list every registered implementation
 """
@@ -73,6 +74,7 @@ def run(
     profile: list[str] = typer.Option(None, "--profile", "-p", help="latency profile(s), stackable"),
     walker: str = typer.Option(None, help="expected_value | monte_carlo"),
     samples: int = typer.Option(None, help="monte_carlo sample count"),
+    seed: int = typer.Option(None, help="monte_carlo random seed (reproducible runs)"),
     fmt: str = typer.Option(None, "--format", help="force parser: terraform | cloudformation"),
     all_hops: bool = typer.Option(False, "--all-hops", help="show every hop in path order, not just the top-N"),
     output: list[str] = typer.Option(None, "--output", "-o", help="reporters: text | json | markdown (repeatable)"),
@@ -83,8 +85,8 @@ def run(
     _bootstrap(target)
     cfg = load_config(_base_dir(target), {
         "latency.profiles": ["defaults", *profile] if profile else None,
-        "simulation.walker": walker, "simulation.samples": samples, "format": fmt,
-        "parsers.cloudformation.region": region,
+        "simulation.walker": walker, "simulation.samples": samples, "simulation.seed": seed,
+        "format": fmt, "parsers.cloudformation.region": region,
         "report.outputs": output or None,
     })
     _write_outputs(pipeline.run(target, cfg), cfg, target, all_hops=all_hops)
@@ -157,14 +159,58 @@ def diff(
 
 @app.command()
 def validate(target: Path = typer.Argument(..., exists=True)) -> None:
-    """Parse, normalise, and check scenarios.yaml — exit non-zero on problems."""
+    """Parse, normalise, and check scenarios.yaml — exit non-zero on problems.
+    Also warns about scenario steps that name a node no edge touches (a typo,
+    or a resource nothing is wired to) and prints the latency profile rungs."""
     from iacsim.core import pipeline
     _bootstrap(target)
     cfg = load_config(_base_dir(target))
     g, _ = pipeline.build_graph(target, cfg)
     scenarios = pipeline.load_scenarios(g, target, cfg)
+    profile = pipeline.load_profile(cfg)
+    problems = list(g.warnings) + _unwired_steps(g, scenarios)
     typer.echo(f"ok: {len(g.nodes)} nodes, {len(g.edges)} edges, {len(scenarios)} scenarios")
-    raise typer.Exit(code=1 if g.warnings else 0)
+    typer.echo(f"profile: {' → '.join(profile.sources)}")
+    for w in problems:
+        typer.echo(f"warning: {w}", err=True)
+    raise typer.Exit(code=1 if problems else 0)
+
+
+def _unwired_steps(g, scenarios) -> list[str]:
+    """Scenario steps naming nodes with no incident edge — the walker would price
+    them as synthetic hops, which is usually not what the author meant."""
+    touched = {e.src for e in g.edges} | {e.dst for e in g.edges}
+    warnings = []
+
+    def walk(steps, scenario_name):
+        for st in steps:
+            for node in [st.node, st.fanout[0] if st.fanout else None]:
+                if node and node not in touched:
+                    warnings.append(f"scenario '{scenario_name}' step '{node}' has no inferred edges")
+            for branch in st.parallel or []:
+                walk(branch, scenario_name)
+
+    for sc in scenarios:
+        walk(sc.steps, sc.name)
+    return warnings
+
+
+@app.command()
+def view(
+    target: Path = typer.Argument(..., exists=True, help="Terraform dir or CloudFormation template"),
+    port: int = typer.Option(0, help="port to serve on (0 = pick a free one)"),
+    no_open: bool = typer.Option(False, "--no-open", help="do not open a browser"),
+    duration: float = typer.Option(None, help="serve for N seconds then stop (default: until Ctrl-C)"),
+) -> None:
+    """Open the graph viewer: runs the pipeline if .iacsim/report.json is
+    missing, then serves .iacsim/ over HTTP and opens the browser."""
+    from iacsim.viewer import prepare, serve
+    _bootstrap(target)
+    cfg = load_config(_base_dir(target), {"report.outputs": ["json"]})
+    out_dir = prepare(target, cfg)
+    typer.echo(f"serving {out_dir} — press Ctrl-C to stop")
+    url = serve(out_dir, port=port, open_browser=not no_open, duration=duration)
+    typer.echo(f"viewer: {url}")
 
 
 @app.command()
@@ -176,7 +222,8 @@ def calibrate(
     """(M7) Pull real numbers and write a profile in the defaults.yaml schema."""
     _bootstrap(Path.cwd())
     METRIC_SOURCES.get(source)  # fail early if unknown
-    raise typer.Exit("calibrate: not implemented yet (M7)")
+    typer.echo(f"calibrate: not implemented yet (M7) — would write {out} from {source} over {window}", err=True)
+    raise typer.Exit(code=1)
 
 
 @app.command()

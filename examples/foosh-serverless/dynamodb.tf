@@ -1,14 +1,18 @@
 # Ten tables, exactly as in unified_workflow_stack.py::create_dynamodb_tables.
-# Keys and GSIs are kept because the api Lambda queries the GSIs.
+# Keys and GSIs are kept because the api Lambda queries the GSIs. Table names
+# follow config/environments/staging.json — two of them do not follow the
+# TitleCase(key) pattern, hence `name_override`.
 
 locals {
   tables = {
     workflows = {
+      name_override = "AsyncWorkflows${title(local.suffix)}"
       hash_key   = "id"
       attributes = { id = "S", workspace_id = "S", created_at = "S" }
       gsis       = { "workspace-created-at-index" = { hash_key = "workspace_id", range_key = "created_at" } }
     }
     executions = {
+      name_override = "WorkflowExecutions${title(local.suffix)}SF"
       hash_key   = "id"
       attributes = { id = "S", workflow_id = "S", created_at = "S" }
       gsis       = { "workflow-id-index" = { hash_key = "workflow_id", range_key = "created_at" } }
@@ -71,7 +75,7 @@ module "table" {
   source   = "../modules/dynamodb_table"
   for_each = local.tables
 
-  name          = "${replace(title(replace(each.key, "_", " ")), " ", "")}${title(local.suffix)}"
+  name          = try(each.value.name_override, "${replace(title(replace(each.key, "_", " ")), " ", "")}${title(local.suffix)}")
   hash_key      = each.value.hash_key
   range_key     = try(each.value.range_key, null)
   attributes    = each.value.attributes

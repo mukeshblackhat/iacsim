@@ -56,6 +56,8 @@ iacsim run ./infra --scenario checkout    # simulate a named request path
 iacsim diff ./infra-before ./infra-after  # compare two versions
 iacsim run ./infra --profile measured.yaml  # use measured latency numbers
 iacsim calibrate --out measured.yaml        # (M7) pull real numbers from CloudWatch
+iacsim run ./infra --walker monte_carlo --samples 10000 --seed 1   # (M6) p50/p95/p99 + tail risk
+iacsim view ./infra                         # (M6) graph viewer in the browser
 ```
 
 and gets a report: total latency, ranked bottleneck list, and per-hop breakdown.
@@ -133,7 +135,7 @@ Every stage talks to the next one **only through the Infra Graph (IR)**. That is
 | Latency profile source | `ProfileSource.load() -> Profile` | `defaults`, `yaml_file`, `cloudwatch` (M7) | `--profile` (stackable) |
 | Latency cost rules | `CostRule.cost(edge, profile) -> Latency` | `distance`, `processing`, `cold_start`, `serialisation` | `latency.rules: [list]` |
 | Simulation walker | `Walker.run(graph, scenario) -> Result` | `expected_value` (M2), `monte_carlo` (M6) | `--walker` / `simulation.walker:` |
-| Analyzer | `Analyzer.analyse(Result) -> Findings` | `per_hop`, `per_node`, `per_category`, `critical_path` | `analysis.analyzers: [list]` |
+| Analyzer | `Analyzer.analyse(Result) -> Findings` | `per_hop`, `per_node`, `per_category`, `critical_path`, `recommendations`, `tail_risk` (M6, only speaks when sampled) | `analysis.analyzers: [list]` |
 | Reporter | `Reporter.render(Findings) -> output` | `text`, `json`, `markdown`, `html` (M6) | `--output` |
 | Metric source (calibration) | `MetricSource.query(...)` | `cloudwatch`, `fake` (tests) | `calibrate.source:` |
 
@@ -157,7 +159,7 @@ simulation:
   walker: expected_value      # or monte_carlo
   samples: 10000              # monte_carlo only
 analysis:
-  analyzers: [per_hop, per_node, per_category, critical_path]
+  analyzers: [per_hop, per_node, per_category, critical_path, recommendations, tail_risk]
 report:
   outputs: [text, json]
 ```

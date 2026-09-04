@@ -40,7 +40,7 @@ def test_lambda_attrs_come_from_module_inputs(foosh):
     assert graph.nodes[worker("video_creation")].attrs["timeout"] == 900
     assert graph.nodes[API].attrs["reserved_concurrent_executions"] == 100
     assert graph.nodes[API].label == "async-workflow-api-staging"
-    assert graph.nodes[table("workflows")].label == "WorkflowsStaging"
+    assert graph.nodes[table("workflows")].label == "AsyncWorkflowsStaging"       # real name (name_override)
 
 
 def test_api_gateway_invokes_api_lambda(foosh):

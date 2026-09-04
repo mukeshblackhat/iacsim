@@ -6,10 +6,11 @@ import pytest
 
 from iacsim.core.interfaces import REPORTERS
 
-SCENARIO_KEYS = {"name", "description", "source", "total_ms", "shape", "profile", "hops", "findings", "warnings"}
+SCENARIO_KEYS = {"name", "description", "source", "total_ms", "percentiles", "samples", "shape", "profile", "hops",
+                 "findings", "warnings"}
 FINDING_KEYS = {"analyzer", "subject", "latency_ms", "share", "detail", "refs", "layer", "additive"}
-HOP_KEYS = {"src", "dst", "label", "latency_ms", "breakdown", "evidence", "on_critical_path", "group"}
-ANALYZERS = {"per_hop", "per_node", "per_category", "critical_path", "recommendations"}
+HOP_KEYS = {"src", "dst", "label", "latency_ms", "breakdown", "evidence", "on_critical_path", "group", "percentiles"}
+ANALYZERS = {"per_hop", "per_node", "per_category", "critical_path", "recommendations", "tail_risk"}
 
 
 @pytest.fixture(params=["classic_web_run", "classic_web_bad_run", "foosh_run"])

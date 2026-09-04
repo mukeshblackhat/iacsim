@@ -70,7 +70,7 @@ class TextReporter(Reporter):
         table = Table(title=section.title, title_justify="left", caption=section.intro,
                       caption_justify="left", show_lines=False, pad_edge=False, expand=False)
         for col in section.columns:
-            justify = "right" if col in ("ms", "share", "saves ~ms", "of total", "#") else "left"
+            justify = "right" if col in ("ms", "p99", "p99 − p50", "share", "share of spread", "saves ~ms", "of total", "#") else "left"
             table.add_column(col, justify=justify, overflow="fold", no_wrap=(col in ("bar", "layer")))
         for row in section.rows:
             table.add_row(*row.cells)
