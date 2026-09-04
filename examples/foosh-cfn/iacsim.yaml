@@ -1,0 +1,9 @@
+# Only the calibrate block. The fixture is keyed by physical AWS name, so the
+# Terraform twin's numbers calibrate this CloudFormation graph too.
+calibrate:
+  source: fake
+  window: 7d
+  out: calibrated.yaml
+  sources:
+    fake:
+      fixture: ../foosh-serverless/calibrate-fixture.yaml

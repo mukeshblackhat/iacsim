@@ -8,7 +8,8 @@
                  [-o text -o json -o markdown]   exit 2 when a total grows past the threshold
     iacsim validate ./infra              parse + normalise + check scenarios.yaml, no simulation
     iacsim view  ./infra [--port N] [--no-open]   serve the graph viewer for .iacsim/report.json
-    iacsim calibrate --out p.yaml        (M7) CloudWatch → profile
+    iacsim calibrate ./infra [--source cloudwatch|fake] [--window 7d] [--out measured.yaml]
+                             [--region R] [--dry-run]   measured numbers → profile YAML (rung 2)
     iacsim plugins                       list every registered implementation
 """
 
@@ -215,15 +216,87 @@ def view(
 
 @app.command()
 def calibrate(
-    out: Path = typer.Option(Path("calibrated.yaml"), "--out"),
-    source: str = typer.Option("cloudwatch"),
-    window: str = typer.Option("7d"),
+    target: Path = typer.Argument(..., exists=True, help="Terraform dir or CloudFormation template"),
+    source: str = typer.Option(None, help="metric source: cloudwatch | fake | <plugin> (config: calibrate.source)"),
+    window: str = typer.Option(None, help="lookback: 7d | 24h | 30m (config: calibrate.window)"),
+    out: Path = typer.Option(None, "--out", help="profile to write (default: <target>/calibrated.yaml)"),
+    region: str = typer.Option(None, help="AWS region for the metric source (default: each node's own)"),
+    fmt: str = typer.Option(None, "--format", help="force parser: terraform | cloudformation"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="show coverage, write nothing"),
 ) -> None:
-    """(M7) Pull real numbers and write a profile in the defaults.yaml schema."""
-    _bootstrap(Path.cwd())
-    METRIC_SOURCES.get(source)  # fail early if unknown
-    typer.echo(f"calibrate: not implemented yet (M7) — would write {out} from {source} over {window}", err=True)
-    raise typer.Exit(code=1)
+    """Replace guessed latency numbers with measured ones: query the configured
+    metric source for every Lambda / table / LB / API in the graph and write a
+    profile YAML (rung 2) to pass back as `--profile`. Exit 0 with skips,
+    1 if nothing could be measured, 3 if the source is not set up."""
+    from iacsim.core import pipeline
+    from iacsim.core.registry import UnknownImplementation
+    from iacsim.latency.calibrate import MetricSourceError, make_metric_source
+    from iacsim.latency.calibrate.calibrator import calibrate as run_calibration
+    from iacsim.latency.calibrate.writer import write_profile
+
+    _bootstrap(target)
+    base = _base_dir(target)
+    cfg = load_config(base, {"calibrate.source": source, "calibrate.window": window,
+                             "format": fmt, "parsers.cloudformation.region": region})
+    name = cfg.get("calibrate.source")
+    if region:
+        cfg.set(f"calibrate.sources.{name}.region", region)
+
+    try:
+        metric_source = make_metric_source(cfg, base)
+        graph, raw = pipeline.build_graph(target, cfg)
+        result = run_calibration(graph, metric_source, cfg.get("calibrate.window"), fmt=raw.format)
+    except UnknownImplementation:
+        raise typer.BadParameter(
+            f"unknown metric source '{name}'; available: {', '.join(METRIC_SOURCES.names())}") from None
+    except MetricSourceError as e:
+        typer.echo(f"calibrate: {e}", err=True)
+        raise typer.Exit(code=3) from None
+
+    typer.echo(_coverage_table(result, graph), nl=False)
+    if not result.covered:
+        typer.echo("nothing calibrated — check calibrate.source / --window; defaults unchanged", err=True)
+        raise typer.Exit(code=1)
+    if dry_run:
+        typer.echo("dry run — nothing written")
+        return
+    path = write_profile(result, out if out else base / cfg.get("calibrate.out"))
+    typer.echo(f"wrote {path}")
+    typer.echo(f"next: iacsim run {target} --profile {path}")
+
+
+def _coverage_table(result, graph) -> str:
+    """Covered nodes with the keys measured, skipped nodes with the reason, and
+    how many measurable nodes stay on defaults.yaml."""
+    import io
+
+    from rich.console import Console
+    from rich.table import Table
+
+    console = Console(file=io.StringIO(), force_terminal=False, width=110)
+    covered = Table(title=f"calibrated {len(result.covered)} node(s) — source={result.meta['source']}, "
+                          f"window={result.meta['window']}", show_lines=False)
+    covered.add_column("node"); covered.add_column("kind"); covered.add_column("measured")
+    for node_id in result.covered:
+        node = graph.nodes[node_id]
+        keys = ", ".join(f"{k}={v}" for k, v in result.measured[node_id].items())
+        if result.filled.get(node_id):
+            keys += f"  ({', '.join(result.filled[node_id])} from defaults)"
+        covered.add_row(node.label or node_id, node.subtype, keys)
+    console.print(covered)
+    if result.skipped:
+        skipped = Table(title=f"skipped {len(result.skipped)} node(s) — defaults kept")
+        skipped.add_column("node"); skipped.add_column("kind"); skipped.add_column("reason")
+        for node_id, reason in result.skipped:
+            node = graph.nodes[node_id]
+            skipped.add_row(node.label or node_id, node.subtype, reason)
+        console.print(skipped)
+    measurable = sum(1 for n in graph.nodes.values() if n.subtype in _MEASURABLE)
+    console.print(f"{measurable - len(result.covered)} of {measurable} measurable node(s) stay on defaults.yaml")
+    return console.file.getvalue()
+
+
+_MEASURABLE = ("lambda", "dynamodb", "rds", "alb", "api_gateway", "step_functions")
 
 
 @app.command()

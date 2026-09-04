@@ -198,10 +198,18 @@ class Profile:
     variance: dict[str, Any] = field(default_factory=dict)
 
     def processing_for(self, node: Node) -> dict[str, Any]:
-        """per_resource[node.id] → defaults[subtype] → {}"""
+        """defaults[subtype] ← by_label[node.label] ← per_resource[node.id]  (later wins per key).
+
+        Merging (not replacing) means a calibrated or hand-written override can
+        set just `warm` and still inherit `cold` / `cold_prob`. `by_label` is
+        keyed by the physical AWS name, so one calibrated file serves both the
+        Terraform and the CloudFormation graph of the same stack."""
         section = self.processing.get(node.subtype, {})
-        per_resource = section.get("per_resource", {}).get(node.id)
-        return per_resource or section.get("defaults", {})
+        block = dict(section.get("defaults", {}))
+        if node.label:
+            block.update(section.get("by_label", {}).get(node.label, {}))
+        block.update(section.get("per_resource", {}).get(node.id, {}))
+        return block
 
 
 # ------------------------------------------------------------------ simulation output

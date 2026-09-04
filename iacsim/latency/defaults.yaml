@@ -23,11 +23,15 @@ distance:
 
 # Spread around the numbers above — only the Monte-Carlo walker reads these.
 # σ is the lognormal's log-space standard deviation (0.2 ≈ ±20 % most of the time).
-# `iacsim calibrate` (M7) fills these from measured p50/p99 alongside the means.
+# `iacsim calibrate` writes a measured processing_sigma alongside the means.
 variance:
   distance_sigma: 0.2
   processing_sigma: 0.3
 
+# Lookup per node: defaults ← by_label[<physical name>] ← per_resource[<node id>]
+# (later wins per key). `iacsim calibrate` fills per_resource and by_label;
+# hand edits are welcome in either. by_label works for Terraform and
+# CloudFormation graphs of the same stack; per_resource is bound to one format.
 processing:
   lambda:
     defaults: { warm: 5, cold: 400, cold_prob: 0.05 }

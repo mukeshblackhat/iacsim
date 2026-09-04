@@ -328,12 +328,83 @@ Legend: ✅ done · 🔨 in progress · ⏳ planned · 🧊 parked
   from M2; the viewer's layout is a simple layered one (no force-directed
   physics), fine up to ~50 nodes.
 
-### Next session
-- Start **M7**: `iacsim calibrate` — CloudWatch `MetricSource` filling
-  `processing.<subtype>.per_resource.<id>.{warm, cold, cold_prob, read, write,
-  sigma}` and `variance.*` from Lambda `Duration` / `InitDuration`, DynamoDB
-  `SuccessfulRequestLatency`, RDS `Read/WriteLatency`, ALB
-  `TargetResponseTime`; needs AWS credentials for the Foosh account.
+### M7 done (same day, parallel agent) — option (b): built and tested against a fake source
+
+Decision: the metric source is company-specific (account, region, credentials,
+even which monitoring system), so it is chosen purely in `iacsim.yaml` and
+`cloudwatch` is one implementation among any a team can plug in. Everything is
+tested through the `fake` source; the CloudWatch source is complete but was
+**not** run against a live account.
+
+- **`MetricSource` ABC** (`core/interfaces.py`): `supports(kind)`,
+  `measure(kind, name, window, region) -> dict | None`, plus `prepare(root)`
+  and `describe()` hooks; `MetricSourceError` → exit 3 with a one-line hint.
+  Constructed from `calibrate.sources.<name>` options exactly like parsers
+  (`make_metric_source`), so a Datadog/X-Ray source is a file in `plugins/`.
+- **Calibrator** (`latency/calibrate/calibrator.py`): every Lambda / table /
+  RDS / ALB / API / state-machine node → complete block (`defaults ←
+  measured`, so a partial measurement still has `cold`/`cold_prob`), written
+  `by_label` (physical name, portable across Terraform/CloudFormation) or
+  `per_resource` (node id) when the name is ambiguous. Skips carry a reason.
+  `variance.processing_sigma` = median of measured σ when ≥ 3.
+- **Writer** (`writer.py`): overlay YAML in the defaults.yaml schema with a
+  provenance header; round-trips through `--profile`. `Profile.processing_for`
+  now **merges** `defaults ← by_label ← per_resource` (was replace).
+- **Rung in every header**: `profile  defaults → measured.yaml (fake, 7d)`.
+- **CloudWatch** (`cloudwatch_queries.py` pure + tested with canned
+  GetMetricData results; `cloudwatch.py` thin boto3 wrapper): Duration p50/p99
+  → warm/σ, InitDuration → cold, inits/invocations → cold_prob, DynamoDB
+  per-operation latency, RDS s→ms, ALB dimension via ListMetrics, API GW
+  `Latency − IntegrationLatency`; Step Functions unsupported (not a metric).
+- **CLI**: `iacsim calibrate <target> [--source] [--window] [--out] [--region]
+  [--dry-run]`; exit 0 with skips, 1 if nothing measured, 2 unknown source,
+  3 source not set up. `examples/foosh-serverless/iacsim.yaml` and
+  `examples/foosh-cfn/iacsim.yaml` carry only a `calibrate:` block pointing at
+  `calibrate-fixture.yaml` (keyed by physical name; two Lambdas left out, one
+  deliberately partial), so `iacsim calibrate examples/foosh-serverless` needs
+  no flags.
+
+  ```
+  calibrated 26 node(s) — source=fake, window=7d
+  async-workflow-image-generation-staging  lambda    warm=18000, cold=19000, cold_prob=0.05, sigma=0.3
+  async-workflow-parser-staging            lambda    warm=40, cold=900, cold_prob=0.3, sigma=0.4
+  async-workflow-text-input-staging        lambda    warm=35  (cold, cold_prob from defaults)
+  AsyncWorkflowsStaging                    dynamodb  read=3.2, write=6.1
+  …
+  skipped 2 node(s) — defaults kept
+  async-workflow-router-staging            lambda    no data in window
+  async-workflow-video-input-staging       lambda    no data in window
+  2 of 28 measurable node(s) stay on defaults.yaml
+  ```
+
+- **Effect on foosh `run_workflow_3_nodes`** (defaults → calibrated):
+  deterministic total 184.0 → 19,731.8 ms; Monte-Carlo (10 000 samples, seed 1)
+  p50 94.0 → 18,257.7 · p95 503.9 → 34,019.0 · p99 892.6 → 42,436.7 ms.
+  The 18 s FAL call inside `image_generation` — Layer B, invisible to the IaC —
+  now dominates, which is exactly the point of rung 2. The same file
+  calibrates `examples/foosh-cfn` through `by_label` (asserted).
+- Tests 141 → 161, coverage ≥ 85 % with `cloudwatch.py` omitted (boto3 wrapper).
+
+**Option (a) — live run, not done.** To calibrate a real account, someone
+with read-only access runs, on their machine:
+
+```
+pip install 'iacsim[calibrate]'                       # boto3
+aws configure --profile readonly                       # cloudwatch:GetMetricData + ListMetrics is enough
+iacsim calibrate ./infra --source cloudwatch --region us-east-1 --window 7d --out measured.yaml
+iacsim run ./infra --profile measured.yaml --walker monte_carlo
+```
+
+(or put `source: cloudwatch` and `aws_profile: readonly` in `iacsim.yaml`).
+Cost: cents. Nothing is written to AWS. Expect a few "no data in window"
+skips for idle functions and possibly an ALB dimension the ListMetrics prefix
+match cannot resolve — both keep defaults and say so.
+
+### All milestones complete — M0–M7 in one day, 8 commits, 161 tests.
+
+### Next
+- Option (a): a live CloudWatch calibration when an account is available.
+- Open items / parked list below.
 
 ---
 
@@ -348,13 +419,14 @@ Legend: ✅ done · 🔨 in progress · ⏳ planned · 🧊 parked
 | M4 | Compare designs | `iacsim diff classic-web classic-web-bad` shows the cross-region DB as the delta (graph-level move, A1 shift, the two RDS hops, co-locate recommendation); `--fail-on-regression` for CI | ✅ | 2026-09-04 |
 | M5 | Read CloudFormation / CDK output | `iacsim graph examples/foosh-cfn` (real `cdk synth` output) produces the same graph as `foosh-serverless` — 30/30 nodes, every difference enumerated and explained in the test | ✅ | 2026-09-04 |
 | M6 | Tail latency + polish | `--walker monte_carlo --samples N --seed S` → p50/p90/p95/p99 + `tail_risk`; `iacsim view` graph viewer; CLI tests (141 total); Terraform twin labels == real CDK labels | ✅ | 2026-09-04 |
-| M7 | Real numbers | `iacsim calibrate` pulls Lambda Duration / InitDuration, DynamoDB latency from CloudWatch into a profile YAML; run against Foosh staging | ⏳ | |
+| M7 | Real numbers | `iacsim calibrate` — pluggable `MetricSource`; fake source end-to-end (coverage table, overlay YAML, `by_label`, rung in headers, Monte-Carlo picks up measured cold starts); CloudWatch source shipped, **not run live** (option a) | ✅ | 2026-09-04 |
 
-Estimated: M1–M3 ≈ 1 week (demo-able), M0–M6 ≈ 2 weeks, M7 additive.
+Estimated: M1–M3 ≈ 1 week (demo-able), M0–M6 ≈ 2 weeks, M7 additive. Actual: all of M0–M7 on 2026-09-04.
 
 ## Open items / ideas parked
 
 - 🧊 Reading CDK Python source directly (instead of `cdk.out`) — deferred, `cdk synth` output is enough.
 - 🧊 Non-AWS providers — graph is neutral, only the normaliser is AWS-specific.
 - 🧊 Throughput / queueing under load — out of scope for v1, single-request latency only.
-- 🧊 X-Ray traces as an inference *validator* (confirm/deny inferred edges) — nice M7 extension.
+- 🧊 X-Ray traces as an inference *validator* (confirm/deny inferred edges) — a natural `MetricSource` plugin plus a rule.
+- 🧊 Option (a): live CloudWatch calibration against a real account (read-only creds; one command, see M7 notes).

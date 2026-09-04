@@ -52,8 +52,15 @@ DEFAULTS: dict[str, Any] = {
         "out_dir": ".iacsim",
     },
     "calibrate": {
-        "source": "cloudwatch",
-        "window": "7d",
+        "source": "cloudwatch",      # any registered metric source; plugins/ can add more
+        "window": "7d",              # 7d | 24h | 30m
+        "out": "calibrated.yaml",    # relative to the target dir
+        # Per-source options, passed as ctor kwargs (None → the source's own default).
+        # Credentials never go here: the AWS credential chain / env vars supply them.
+        "sources": {
+            "cloudwatch": {"region": None, "aws_profile": None},
+            "fake": {"fixture": None},
+        },
     },
 }
 

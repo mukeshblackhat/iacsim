@@ -35,7 +35,7 @@ to A1 / A2 / A3 side by side (`per_category` analyzer: `distance`,
 |---|---|---|---|
 | 0 | Built-in defaults (public AWS figures) — `latency/defaults.yaml` | per service type | now |
 | 1 | Team overrides — `--profile team.yaml` | per type or per resource | now |
-| 2 | CloudWatch calibration — `iacsim calibrate` | per resource | M7 |
+| 2 | Measured — `iacsim calibrate` via a pluggable `MetricSource` (`cloudwatch` built in, `fake` for tests, plugins for anything else) | per resource | built (M7); live CloudWatch run pending an account |
 | 3 | Traces (X-Ray) | per hop; also confirms/denies inferred edges | parked |
 
 The engine never knows which rung it is on; the report prints it.
@@ -55,7 +55,7 @@ iacsim run ./infra                        # simulate current infra
 iacsim run ./infra --scenario checkout    # simulate a named request path
 iacsim diff ./infra-before ./infra-after  # compare two versions
 iacsim run ./infra --profile measured.yaml  # use measured latency numbers
-iacsim calibrate --out measured.yaml        # (M7) pull real numbers from CloudWatch
+iacsim calibrate ./infra [--source cloudwatch|fake] [--window 7d] [--out measured.yaml] [--dry-run]   # measured numbers → profile (rung 2)
 iacsim run ./infra --walker monte_carlo --samples 10000 --seed 1   # (M6) p50/p95/p99 + tail risk
 iacsim view ./infra                         # (M6) graph viewer in the browser
 ```
@@ -77,7 +77,7 @@ and gets a report: total latency, ranked bottleneck list, and per-hop breakdown.
 ### Out of scope (v1)
 - Non-AWS providers (GCP, Azure) — the graph is provider-neutral, but only AWS parsers are built.
 - Load/throughput modelling (queueing under contention). We model latency of a single request, not saturation.
-- Live measurement / pulling real metrics from CloudWatch.
+- Live *tracing* (X-Ray per-hop timings). Aggregate metrics via `iacsim calibrate` are in (M7).
 - Application code analysis (we don't read Lambda source to figure out what it calls).
 - Reading CDK / Pulumi source directly (Q5) — run `cdk synth` yourself and point the tool at `cdk.out/`.
 - Web UI in v1 (Q2: deferred to M6 — a static graph viewer reading `graph.json` / `report.json`).
@@ -132,12 +132,12 @@ Every stage talks to the next one **only through the Infra Graph (IR)**. That is
 | Resource normaliser (provider → neutral node kind) | `Normaliser.normalise(RawResources) -> InfraGraph` | `aws` | `provider:` in config |
 | Edge inference rules | `InferenceRule.apply(graph) -> [Edge]` | one class per row of the inference table (`step_functions`, `event_source_mapping`, `lambda_permission`, `target_group`, `env_var`, `iam_policy`, …) | `inference.rules: [list]` — enable/disable/reorder |
 | Scenario source | `ScenarioSource.load() -> [Scenario]` | `yaml_file`, `inferred_from_entrypoints` | `scenarios.sources: [list]` |
-| Latency profile source | `ProfileSource.load() -> Profile` | `defaults`, `yaml_file`, `cloudwatch` (M7) | `--profile` (stackable) |
+| Latency profile source | `ProfileSource.load() -> dict` | `defaults`, `yaml_file` (a calibrated file is just a `yaml_file`) | `--profile` (stackable) |
 | Latency cost rules | `CostRule.cost(edge, profile) -> Latency` | `distance`, `processing`, `cold_start`, `serialisation` | `latency.rules: [list]` |
 | Simulation walker | `Walker.run(graph, scenario) -> Result` | `expected_value` (M2), `monte_carlo` (M6) | `--walker` / `simulation.walker:` |
 | Analyzer | `Analyzer.analyse(Result) -> Findings` | `per_hop`, `per_node`, `per_category`, `critical_path`, `recommendations`, `tail_risk` (M6, only speaks when sampled) | `analysis.analyzers: [list]` |
 | Reporter | `Reporter.render(Findings) -> output` | `text`, `json`, `markdown`, `html` (M6) | `--output` |
-| Metric source (calibration) | `MetricSource.query(...)` | `cloudwatch`, `fake` (tests) | `calibrate.source:` |
+| Metric source (calibration) | `MetricSource.supports(kind)` / `.measure(kind, name, window, region) -> dict | None`, plus `prepare(root)` / `describe()` hooks | `cloudwatch`, `fake`; company plugins (Datadog, X-Ray…) in `plugins/` | `calibrate.source:` + `calibrate.sources.<name>:` options |
 
 Mechanics:
 
@@ -174,7 +174,7 @@ The IR (`InfraGraph`, `Scenario`, `Profile`, `Result`, `Findings`) is the fixed 
 | `parsers/cloudformation` | Read template JSON/YAML, resolve `Ref`/`Fn::GetAtt`/`DependsOn`, emit raw resources + references | — |
 | `graph/` | The IR: `Node`, `Edge`, `InfraGraph`. Normaliser maps provider-specific resource types to neutral node kinds (`compute`, `datastore`, `lb`, `queue`, `gateway`, `cdn`, `network`) and attaches `region` / `az` / `vpc` placement. | parsers |
 | `latency/` | Cost table (built-in YAML) + rules that turn an edge into a latency distribution: `base(kind_a → kind_b) + distance(placement_a, placement_b) + processing(kind_b)` | graph |
-| `latency/calibrate/` *(M7)* | `MetricSource` interface + CloudWatch implementation; writes a profile YAML in the same schema. Only module that imports `boto3` | latency |
+| `latency/calibrate/` | `calibrator.py` (graph + MetricSource → complete per-resource blocks), `writer.py` (overlay YAML), `fake.py`, `cloudwatch_queries.py` (pure maths, tested), `cloudwatch.py` (thin boto3 wrapper, the only boto3 import) | latency, core.interfaces |
 | `simulator/` | Walks a scenario path through the weighted graph. Sequential hops add; parallel branches take the max; fan-out (Step Functions Map / SQS) modelled explicitly. Two walkers behind one interface (Q6): `ExpectedValueWalker` (M2) and `MonteCarloWalker` (M6, `--samples N`, reports p50/p95/p99) | latency, scenarios |
 | `analyzer/` | Attribution: which hops / nodes / *categories* (cross-region, cold start, DB) contribute what %. Ranks them. | simulator |
 | `differ/` | Runs the pipeline on two inputs, aligns nodes by logical name, reports deltas | everything above |
@@ -256,33 +256,40 @@ The **same YAML schema** is used at every layer, so a hand-written profile and a
 
 ```yaml
 meta:
-  source: "defaults" | "manual" | "cloudwatch"
-  generated_at: 2026-09-04T10:00:00Z
-  account: "123456789012"        # only for cloudwatch
-  window: "7d"                   # only for cloudwatch
+  source: "defaults" | "cloudwatch" | "fake" | <plugin name>     # shown in every report header as the rung
+  window: "7d"
+  generated_at: 2026-09-04T10:00:00+00:00
+  format: terraform                # which IaC the per_resource ids belong to
+  region: us-east-1
+variance:
+  processing_sigma: 0.3            # median of measured per-resource σ, when ≥ 3 were measured
 processing:
   lambda:
-    defaults: { warm: 5, cold: 400, cold_prob: 0.05 }
-    per_resource:                # calibrate fills this; hand edits allowed too
-      aws_lambda_function.create_order: { warm: 12, cold: 850, cold_prob: 0.02 }
+    defaults: { warm: 5, cold: 400, cold_prob: 0.05 }          # defaults.yaml only
+    by_label:                      # calibrate writes these, keyed by physical AWS name
+      async-workflow-parser-staging: { warm: 40, cold: 900, cold_prob: 0.3, sigma: 0.4 }
+    per_resource:                  # only when a name is ambiguous in the graph; keyed by node id
+      module.worker["x"].aws_lambda_function.this: { warm: 12, cold: 850, cold_prob: 0.02 }
 ```
 
-Lookup order for any node: `per_resource[node.id]` → `defaults[subtype]` → hard-coded fallback. So calibration only ever *adds* `per_resource` entries; it never changes the shape of the file.
+Lookup for any node: `defaults[subtype]` ← `by_label[node.label]` ← `per_resource[node.id]`, **merged** (later wins per key), so an override can set one key and inherit the rest. A calibrated file is an *overlay* — `meta`, `variance`, `processing.<subtype>.{by_label, per_resource}` — and never changes the shape of the schema. `by_label` is what lets one calibrated file serve both the Terraform and the CloudFormation graph of a stack.
 
-### Calibration — designed now, built in M7
+### Calibration — built (M7), pluggable by design
 
-`iacsim calibrate --account prod --window 7d --out calibrated-prod.yaml`
+`iacsim calibrate ./infra [--source NAME] [--window 7d] [--out measured.yaml] [--region R] [--dry-run]`
 
-| Metric source | Fills |
-|---|---|
-| CloudWatch `Lambda.Duration` p50/p99 + `InitDuration` | `lambda.per_resource.*.warm / cold / cold_prob` |
-| CloudWatch `DynamoDB.SuccessfulRequestLatency` per table/op | `dynamodb.per_resource.*.read / write` |
-| CloudWatch `RDS.ReadLatency / WriteLatency` | `rds.per_resource.*` |
-| CloudWatch `ApplicationELB.TargetResponseTime` | `alb.per_resource.*` |
-| Step Functions execution history (state transition timestamps) | `step_functions.transition`, per-state durations |
-| X-Ray traces (if enabled) | cross-service hop times — can *also* confirm/deny inferred edges |
+Graph → for every node whose subtype is a metric kind → `MetricSource.measure(kind, physical name, window, region)` → complete block (`defaults ← measured`) → overlay YAML + coverage table (covered with the measured keys and any filled from defaults; skipped with reason: no data in window / source does not support kind / no physical name).
 
-Lives in `latency/calibrate/` behind an abstract `MetricSource` so it can be unit-tested with a fake source and never touches `boto3` outside that module.
+| Kind | CloudWatch source reads | Fills |
+|---|---|---|
+| lambda | `Duration` p50, p99; `InitDuration` p50 + SampleCount; `Invocations` Sum | `warm`, `cold = warm + init`, `cold_prob = inits / invocations`, `sigma = ln(p99/p50)/2.326` |
+| dynamodb | `SuccessfulRequestLatency` p50 per GetItem / Query / PutItem / UpdateItem | `read`, `write` |
+| rds | `ReadLatency`, `WriteLatency` (s → ms) | `read`, `write` |
+| alb | `TargetResponseTime` p50 (dimension `app/<name>/<id>` resolved via ListMetrics) | `route` |
+| api_gateway | `Latency` p50 − `IntegrationLatency` p50 | `route` |
+| step_functions | — not a metric; per-state timings need execution history — unsupported by the CloudWatch source (a plugin may add it) | |
+
+The source is company-specific: `calibrate.source` picks a registered `MetricSource`, `calibrate.sources.<name>` are its constructor options (region, named AWS profile, fixture path, env-var *names* — never credentials). `prepare(root)` lets a source resolve paths relative to the config; `describe()` adds provenance to `meta`. `cloudwatch_queries.py` holds all the maths and is unit-tested with canned responses; `cloudwatch.py` is the only file that imports boto3 (lazily — missing SDK or credentials → one-line hint, exit 3). The `fake` source reads a YAML fixture and backs every test. A live CloudWatch run is not exercised in this repo (no account); see TIMELINE.md "Option (a)".
 
 ## 9. Repository layout
 
@@ -295,7 +302,7 @@ IAC/
     parsers/     detect.py  terraform/{hcl_expr,evaluator,loader,parser}.py  cloudformation/parser.py
     graph/       normalisers/aws.py  inference/<one file per rule>.py  (+ vpc_peering, added in M1)
     scenarios/   yaml_file.py  inferred.py
-    latency/     defaults.yaml  profile.py  rules/{distance,processing,cold_start}.py  calibrate/{fake,cloudwatch}.py
+    latency/     defaults.yaml  profile.py  rules/{distance,processing,cold_start}.py  calibrate/{calibrator,writer,fake,cloudwatch,cloudwatch_queries}.py
     simulator/   walkers/{expected_value,monte_carlo}.py
     analyzer/    per_hop.py  per_node.py  per_category.py  critical_path.py
     reporter/    text.py  json_.py
@@ -304,7 +311,7 @@ IAC/
   pyproject.toml
     parsers/{terraform,cloudformation}/
     graph/
-    latency/  defaults.yaml  profiles/  calibrate/   # calibrate/ lands in M7
+    latency/  defaults.yaml  calibrate/
     simulator/
     analyzer/
     differ/
@@ -334,7 +341,7 @@ IAC/
 | M4 | `diff` command | 1 day |
 | M5 | CloudFormation adapter, Foosh as real test case | 2 days |
 | M6 | Polish: validation, docs, tests + Monte-Carlo walker (`--samples`) + static graph viewer | 3 days |
-| M7 | `calibrate`: CloudWatch → profile YAML (needs AWS creds; optional) | 2 days |
+| M7 | `calibrate`: pluggable MetricSource → profile YAML; fake source tested end-to-end, CloudWatch source shipped untested against a live account | 1 day |
 
 ~2 weeks of focused work for a reviewable prototype (M0–M6); M1–M3 alone (≈1 week) is already a demo. M7 is additive and can run against the Foosh AWS account when ready.
 

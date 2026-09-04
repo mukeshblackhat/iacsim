@@ -1,0 +1,42 @@
+# Canned "measured" numbers for `iacsim calibrate --source fake --source-option fixture=…`
+# Keyed by physical AWS name, so the same file calibrates examples/foosh-serverless
+# (Terraform) and examples/foosh-cfn (CloudFormation). Plausible for Foosh staging:
+# image/video generation call FAL and take seconds; the parser is bursty and
+# cold-starts often. router and video-input are left out on purpose — the
+# calibrator reports them as "no data in window" and keeps defaults — and
+# text-input is deliberately partial (warm only) so cold / cold_prob come
+# from defaults.yaml and the coverage table says so.
+
+lambda:
+  async-workflow-api-staging:                 { warm: 60,    cold: 1200, cold_prob: 0.08, sigma: 0.35 }
+  async-workflow-parser-staging:              { warm: 40,    cold: 900,  cold_prob: 0.30, sigma: 0.40 }
+  async-workflow-input-preparer-staging:      { warm: 35,    cold: 700,  cold_prob: 0.12, sigma: 0.30 }
+  async-workflow-output-updater-staging:      { warm: 45,    cold: 750,  cold_prob: 0.10, sigma: 0.30 }
+  async-workflow-finalizer-staging:           { warm: 55,    cold: 800,  cold_prob: 0.15, sigma: 0.30 }
+  async-workflow-text-enhancement-staging:    { warm: 2500,  cold: 3200, cold_prob: 0.06, sigma: 0.45 }
+  async-workflow-image-generation-staging:    { warm: 18000, cold: 19000, cold_prob: 0.05, sigma: 0.30 }
+  async-workflow-image-to-image-staging:      { warm: 12000, cold: 12900, cold_prob: 0.05, sigma: 0.30 }
+  async-workflow-video-creation-staging:      { warm: 45000, cold: 46500, cold_prob: 0.05, sigma: 0.35 }
+  async-workflow-lipsync-processing-staging:  { warm: 30000, cold: 31200, cold_prob: 0.05, sigma: 0.35 }
+  async-workflow-text-input-staging:          { warm: 35 }
+  async-workflow-text-iterator-staging:       { warm: 50,    cold: 650,  cold_prob: 0.10, sigma: 0.25 }
+  async-workflow-image-input-staging:         { warm: 80,    cold: 700,  cold_prob: 0.10, sigma: 0.25 }
+  async-workflow-html-template-processor-staging: { warm: 70, cold: 720, cold_prob: 0.10, sigma: 0.25 }
+
+dynamodb:
+  AsyncWorkflowsStaging:          { read: 3.2, write: 6.1 }
+  WorkflowExecutionsStagingSF:    { read: 4.5, write: 7.8 }
+  CheckoutSessionsStaging:        { read: 3.4, write: 6.5 }
+  CreditTransactionsStaging:      { read: 3.9, write: 7.2 }
+  WorkspacesStaging:              { read: 3.1, write: 6.0 }
+  WorkspaceMembersStaging:        { read: 3.6, write: 6.8 }
+  PublicWorkflowSharesStaging:    { read: 4.1, write: 7.5 }
+  PaymentIdempotencyStaging:      { read: 3.3, write: 6.4 }
+  PublishedAppsStaging:           { read: 4.8, write: 8.6 }
+  AppExecutionsStaging:           { read: 4.2, write: 8.9 }
+
+api_gateway:
+  async-workflow-staging-api:     { route: 12 }
+
+step_functions:
+  AsyncWorkflowStagingStateMachine: { transition: 30 }

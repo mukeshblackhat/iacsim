@@ -10,7 +10,8 @@ pip install -e ".[dev]"
 iacsim plugins                       # what is registered
 iacsim graph examples/classic-web    # M1
 iacsim run   examples/classic-web    # M2+
-iacsim diff  examples/classic-web examples/classic-web-bad   # M4: what moved, A1/A2/A3 shift, changed hops
+iacsim diff  examples/classic-web examples/classic-web-bad   # M4
+iacsim calibrate examples/foosh-serverless                     # M7 — measured numbers → calibrated.yaml: what moved, A1/A2/A3 shift, changed hops
 iacsim diff  ./main ./pr --fail-on-regression 50ms           # CI: exit 2 if any scenario grows > 50 ms (or 10%)
 iacsim diff  ./before ./after --scenario checkout -o markdown  # one scenario, PR-comment markdown → .iacsim/diff.md
 iacsim run   examples/foosh-serverless --walker monte_carlo --samples 10000 --seed 1   # M6: p50/p95/p99 + tail risk
@@ -64,6 +65,96 @@ Inside, CloudFormation resources are made Terraform-shaped in one place
 the same `${address.attr}` placeholders) so the normaliser and every
 inference rule run unchanged on both formats.
 
+## Calibrate — replace guesses with measurements
+
+Every number in a report starts as a public average from `latency/defaults.yaml`
+(rung 0) or your own `--profile` (rung 1). `iacsim calibrate` builds **rung 2**:
+it asks a metric source how long each Lambda, table, load balancer and API in
+your graph *actually* took, and writes a profile you pass straight back in.
+
+```
+iacsim calibrate ./infra                     # source + window from iacsim.yaml, writes ./infra/calibrated.yaml
+iacsim calibrate ./infra --source cloudwatch --window 24h --region ap-south-1 --out measured.yaml
+iacsim calibrate ./infra --dry-run           # just the coverage table
+iacsim run ./infra --profile measured.yaml   # header now says:  profile  defaults → measured.yaml (cloudwatch, 24h)
+```
+
+What it prints: a coverage table — every node measured (with the keys it got,
+and which keys were filled from defaults), every node skipped and why
+(`no data in window`, `source does not support rds`, `no physical name`), and
+how many measurable nodes stay on defaults. Nothing is guessed: a resource
+that did not run in the window keeps its default and the report says so.
+
+What CloudWatch is asked (read-only; `cloudwatch:GetMetricData` and
+`cloudwatch:ListMetrics` — AWS's `ReadOnlyAccess` policy covers it; a full
+run over 30 resources costs a fraction of a cent):
+
+| resource | metrics | profile keys |
+|---|---|---|
+| Lambda | `Duration` p50/p99, `InitDuration` p50 + count, `Invocations` | `warm`, `cold`, `cold_prob`, `sigma` |
+| DynamoDB | `SuccessfulRequestLatency` p50 per operation | `read`, `write` |
+| RDS | `ReadLatency`, `WriteLatency` | `read`, `write` |
+| ALB | `TargetResponseTime` p50 | `route` |
+| API Gateway | `Latency` − `IntegrationLatency` | `route` |
+
+Lambda `Duration` includes your code and every third-party call it makes, so
+calibration is also how the application layer enters the model — per function,
+with no code analysis.
+
+The source is **company-specific and pluggable**. Pick and configure it in
+`iacsim.yaml`; credentials come from the normal AWS chain (`aws configure`,
+`AWS_PROFILE`, an instance role), never from the file:
+
+```yaml
+calibrate:
+  source: cloudwatch            # or fake, or any plugin below
+  window: 7d
+  out: calibrated.yaml
+  sources:
+    cloudwatch: { region: us-east-1, aws_profile: readonly }
+    fake:       { fixture: calibrate-fixture.yaml }   # canned numbers — demos, tests, dry runs
+```
+
+Another monitoring system is a 15-line file in `plugins/`:
+
+```python
+# plugins/datadog_source.py
+import os, requests
+from iacsim.core.interfaces import METRIC_SOURCES, MetricSource
+
+@METRIC_SOURCES.register("datadog")
+class DatadogSource(MetricSource):
+    def supports(self, kind):
+        return kind in ("lambda", "dynamodb")
+
+    def measure(self, kind, name, window, region=None):
+        key = os.environ[self.options["api_key_env"]]           # iacsim.yaml names the env var, never the key
+        p50 = requests.get(f"https://api.{self.options['site']}/…", headers={"DD-API-KEY": key}).json()
+        return {"warm": p50["duration"]} if kind == "lambda" else {"read": p50["latency"]}
+```
+
+```yaml
+calibrate:
+  source: datadog
+  sources:
+    datadog: { site: datadoghq.eu, api_key_env: DD_API_KEY }
+```
+
+The written file is an overlay in the `defaults.yaml` schema: `by_label`
+entries keyed by physical AWS name (so one file serves the Terraform and the
+CloudFormation graph of the same stack), `per_resource` by node id only when a
+name is ambiguous, and `meta` recording source, window and time so every
+report header shows which rung it is on. Try it without an account:
+
+```
+iacsim calibrate examples/foosh-serverless      # fake source, examples/foosh-serverless/calibrate-fixture.yaml
+iacsim run examples/foosh-serverless --profile examples/foosh-serverless/calibrated.yaml --walker monte_carlo
+```
+
+A live CloudWatch run against your own account is the same command with
+`source: cloudwatch` after `aws configure` with a read-only key — it has not
+been exercised in this repo (no account here), see `TIMELINE.md`.
+
 ## Layout — one folder per stage, one file per implementation
 
 ```
@@ -72,7 +163,7 @@ iacsim/
   parsers/       terraform/{hcl_expr,evaluator,loader,parser}.py  cloudformation/{template,intrinsics,canonical,parser}.py → RawResources
   graph/         normalisers/aws.py  inference/<rule>.py (8 rules) → InfraGraph
   scenarios/     yaml_file.py  inferred.py            → [Scenario]
-  latency/       defaults.yaml  profile.py  rules/  calibrate/
+  latency/       defaults.yaml  profile.py  rules/  calibrate/{calibrator,writer,fake,cloudwatch,cloudwatch_queries}.py
   simulator/     traversal.py (shared planner + evaluator)  walkers/expected_value.py  monte_carlo.py
   analyzer/      per_hop  per_node  per_category  critical_path  recommendations  tail_risk
   reporter/      text  markdown  json

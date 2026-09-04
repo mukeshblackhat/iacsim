@@ -105,13 +105,45 @@ class Reporter(ABC):
 
 
 class MetricSource(ABC):
-    """Real measurements for calibration (M7). `fake` is used in tests."""
+    """Real measurements for `iacsim calibrate`.
+
+    Company-specific by design: which account, region, credentials — or which
+    monitoring system at all — is chosen in iacsim.yaml (`calibrate.source` +
+    `calibrate.sources.<name>` options) and never in the engine. `cloudwatch`
+    is one implementation; a Datadog or X-Ray source is a plugin implementing
+    these two methods. `fake` is used in tests and dry runs.
+
+    `kind` is the node subtype (lambda, dynamodb, rds, alb, api_gateway,
+    step_functions); `name` is the node's physical name (`Node.label`).
+    `measure` returns the profile keys for that kind (see calibrator.py) or
+    None when the window holds no data — the calibrator then keeps defaults.
+    """
+
+    KINDS = ("lambda", "dynamodb", "rds", "alb", "api_gateway", "step_functions")
+
+    def __init__(self, **options: Any) -> None:
+        self.options = options
+
+    def prepare(self, root: Path) -> None:
+        """Called once before measuring, with the directory that holds iacsim.yaml —
+        resolve relative paths here (mirrors ScenarioSource.load(graph, root))."""
+
+    def describe(self) -> dict[str, Any]:
+        """Provenance for the written profile's meta (region, account, fixture path…).
+        Never secrets."""
+        return {}
+
+    def supports(self, kind: str) -> bool:
+        return True
 
     @abstractmethod
-    def lambda_durations(self, function_name: str, window: str) -> dict[str, float]: ...
+    def measure(self, kind: str, name: str, window: str,
+                region: str | None = None) -> dict[str, float] | None: ...
 
-    @abstractmethod
-    def table_latency(self, table_name: str, window: str) -> dict[str, float]: ...
+
+class MetricSourceError(RuntimeError):
+    """A metric source cannot be used as configured: missing SDK, missing
+    credentials, bad region. `iacsim calibrate` prints the message and exits 3."""
 
 
 # ------------------------------------------------------------------ registries

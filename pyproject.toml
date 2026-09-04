@@ -43,7 +43,7 @@ testpaths = ["tests"]
 
 [tool.coverage.run]
 source = ["iacsim"]
-omit = ["iacsim/latency/calibrate/cloudwatch.py"]   # M7 stub; needs boto3 + an account
+omit = ["iacsim/latency/calibrate/cloudwatch.py"]   # thin boto3 wrapper; needs an AWS account (option a)
 
 [tool.coverage.report]
 show_missing = true

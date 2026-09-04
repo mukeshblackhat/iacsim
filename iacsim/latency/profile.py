@@ -40,9 +40,21 @@ def merge_profiles(layers: list[tuple[str, dict[str, Any]]]) -> Profile:
         meta=merged.get("meta", {}),
         distance=merged.get("distance", {}),
         processing=merged.get("processing", {}),
-        sources=[name for name, _ in layers],
+        sources=[describe_layer(name, layer) for name, layer in layers],
         variance=merged.get("variance", {}),
     )
+
+
+def describe_layer(spec: str, layer: dict[str, Any]) -> str:
+    """How a layer shows up in report headers. A calibrated file carries
+    `meta.source` / `meta.window`, so the rung is visible:
+    `defaults → measured.yaml (cloudwatch, 7d)`. A plain override stays `team.yaml`."""
+    meta = layer.get("meta") or {}
+    source = meta.get("source")
+    if not source or source in ("defaults", "manual") or source == spec:
+        return spec
+    window = meta.get("window")
+    return f"{spec} ({source}, {window})" if window else f"{spec} ({source})"
 
 
 def _deep_merge(base: dict, override: dict) -> dict:

@@ -1,0 +1,9 @@
+# Only the calibrate block — everything else is the built-in default.
+# `iacsim calibrate examples/foosh-serverless` then needs no flags.
+calibrate:
+  source: fake                      # a real team: cloudwatch (+ region / aws_profile below)
+  window: 7d
+  out: calibrated.yaml
+  sources:
+    fake:
+      fixture: calibrate-fixture.yaml
