@@ -23,7 +23,7 @@ import pkgutil
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import Generic, TypeVar
+from typing import TypeVar
 
 T = TypeVar("T")
 
@@ -32,7 +32,7 @@ class UnknownImplementation(KeyError):
     """Raised when a config asks for a name nobody registered."""
 
 
-class Registry(Generic[T]):
+class Registry[T]:
     def __init__(self, kind: str) -> None:
         self.kind = kind            # human label used in error messages, e.g. "walker"
         self._items: dict[str, type[T]] = {}

@@ -1,1 +1,1 @@
-from iacsim.latency import profile, rules, calibrate  # noqa: F401
+from iacsim.latency import calibrate, profile, rules  # noqa: F401

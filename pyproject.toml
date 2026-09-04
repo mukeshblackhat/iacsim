@@ -25,6 +25,9 @@ iacsim = "iacsim.cli:app"
 [tool.ruff]
 line-length = 100
 
+[tool.ruff.lint.per-file-ignores]
+"iacsim/cli.py" = ["B008"]   # typer.Option/Argument in defaults is the typer idiom
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
@@ -34,3 +37,13 @@ include = ["iacsim*"]
 
 [tool.setuptools.package-data]
 iacsim = ["latency/defaults.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["iacsim"]
+omit = ["iacsim/latency/calibrate/cloudwatch.py"]   # M7 stub; needs boto3 + an account
+
+[tool.coverage.report]
+show_missing = true

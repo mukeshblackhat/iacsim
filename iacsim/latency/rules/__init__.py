@@ -1,1 +1,1 @@
-from iacsim.latency.rules import distance, processing, cold_start  # noqa: F401
+from iacsim.latency.rules import cold_start, distance, processing  # noqa: F401
