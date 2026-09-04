@@ -6,7 +6,7 @@ import pytest
 
 from iacsim.core.interfaces import REPORTERS
 
-SCENARIO_KEYS = {"name", "description", "source", "total_ms", "percentiles", "samples", "shape", "profile", "hops",
+SCENARIO_KEYS = {"name", "description", "source", "total_ms", "percentiles", "samples", "load", "shape", "profile", "hops",
                  "findings", "warnings"}
 FINDING_KEYS = {"analyzer", "subject", "latency_ms", "share", "detail", "refs", "layer", "additive"}
 HOP_KEYS = {"src", "dst", "label", "latency_ms", "breakdown", "evidence", "on_critical_path", "group", "percentiles"}

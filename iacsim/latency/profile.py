@@ -42,6 +42,7 @@ def merge_profiles(layers: list[tuple[str, dict[str, Any]]]) -> Profile:
         processing=merged.get("processing", {}),
         sources=[describe_layer(name, layer) for name, layer in layers],
         variance=merged.get("variance", {}),
+        capacity=merged.get("capacity", {}),
     )
 
 

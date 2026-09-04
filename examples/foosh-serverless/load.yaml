@@ -1,0 +1,20 @@
+# Traffic for `iacsim run examples/foosh-serverless --walker load`.
+# One "user" = one person with the editor open. Pair with the measured
+# numbers: --profile examples/foosh-serverless/calibrated.yaml — with the
+# 5 ms defaults nothing saturates, because nothing holds a Lambda slot long.
+
+users: [100, 500, 1000, 2000, 5000, 10000]
+
+per_user:
+  start_workflow: { every: 2m }                    # clicks Run every two minutes
+  poll_status:    { every: 2s, while: running }    # the frontend polls only while a run is in flight
+  save_workflow:  { every: 30s }                   # autosave while editing
+
+workflow_mix:                                      # what a started run looks like
+  - { scenario: run_workflow_3_nodes, share: 0.6 }
+  - { scenario: run_workflow_1_video, share: 0.2 }
+  - { scenario: run_workflow_10_text, share: 0.2 }
+
+thresholds:
+  p99_ms: 2000          # user-facing routes should stay under this
+  utilisation: 0.8      # warn before a resource is fully busy

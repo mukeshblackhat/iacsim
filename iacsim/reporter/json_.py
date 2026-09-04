@@ -24,12 +24,18 @@ graph viewer (M6). Schema version 2:
             "recommendations": [Finding...],   # latency_ms = estimated saving
             "tail_risk":       [Finding...]    # only when sampled; latency_ms = p99 − p50
           },
-          "warnings": [...]
+          "warnings": [...],
+          "load": {}                          # `--walker load` (M8): {users, rps, latency: {U: {expected_ms, p99_ms,
+                                              #   saturated, saturated_by}}, utilisation: {U: {resource: ρ}},
+                                              #   resources: {key: {label, subtype, slots, rps, members, source,
+                                              #   erlangs_per_user, by_scenario}}, thresholds, assumptions, traffic}
         }
-      ]
+      ],
+      "capacity": {}                          # `--walker load` only: the sweep once (users, resources, utilisation,
+                                              # thresholds, assumptions, first_to_break) — the viewer / diff read this
     }
 
-    Finding = {analyzer, subject, latency_ms, share, detail, refs: [hop labels], layer: A1|A2|A3|null, additive}
+    Finding = {analyzer, subject, latency_ms, share, detail, refs: [hop labels], layer: A1|A2|A3|capacity|null, additive}
 
 Stable keys for `diff` to align on: scenario `name`; hop `label` (+ path index);
 per_node `subject`; per_category `subject`; recommendation `subject`.
@@ -74,6 +80,7 @@ class JsonReporter(Reporter):
                 "profile": {"sources": sources},
                 "graph": graph.to_dict(),
                 "scenarios": [f.to_dict() for f in findings],
+                "capacity": _capacity(findings),
             },
             indent=2, default=str,
         )
@@ -82,3 +89,21 @@ class JsonReporter(Reporter):
         payload = diff.to_dict()
         payload["generated_at"] = datetime.now(UTC).isoformat(timespec="seconds")
         return json.dumps(payload, indent=2, default=str)
+
+
+def _capacity(findings: list[Findings]) -> dict:
+    """The load sweep once, at the top level (it is identical on every scenario)."""
+    first = next((f for f in findings if f.load and f.load.get("resources")), None)
+    if first is None:
+        return {}
+    load = first.load
+    breaks = [f for f in first.by_analyzer().get("saturation", []) if f.subject == "first_to_break"]
+    return {
+        "users": load["users"],
+        "thresholds": load.get("thresholds", {}),
+        "assumptions": load.get("assumptions", []),
+        "resources": load["resources"],
+        "utilisation": load["utilisation"],
+        "first_to_break": ({"resource": breaks[0].refs[0], "users": breaks[0].latency_ms, "detail": breaks[0].detail}
+                           if breaks else None),
+    }

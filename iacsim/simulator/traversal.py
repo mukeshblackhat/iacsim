@@ -35,12 +35,15 @@ request is already at repeats the previous hop from the same caller.
 
 Structure: parallel branches are walked from `current`, cost = max(branches),
 every hop recorded, `on_critical_path` only on the slowest branch (decided on
-the backend's scalar view — the mean, for samples); fan-out prices one copy;
-`wait_ms` is a hop-less cost in category "wait".
+the backend's scalar view — the mean, for samples); fan-out prices one copy
+per *wave*: `count` copies through an orchestrator whose Map allows `c` at a
+time cost ceil(count / c) sequential waves (M8 — before that, one copy
+regardless of count); `wait_ms` is a hop-less cost in category "wait".
 """
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
@@ -72,6 +75,8 @@ class PlannedHop:
     evidence: str
     group: str | None = None             # "parallel1/branch2" inside a parallel group
     is_wait: bool = False
+    copies: int = 1                      # fan-out: how many concurrent invocations this hop stands for
+    waves: int = 1                       # fan-out: ceil(copies / Map concurrency) — sequential rounds
 
     @property
     def label(self) -> str:
@@ -109,7 +114,8 @@ class Planner:
 
     def plan(self, scenario: Scenario) -> Plan:
         self.warnings: list[str] = []
-        self.shape = {"sequential_hops": 0, "parallel_groups": 0, "fanout_copies": 0, "wait_ms": 0.0}
+        self.shape = {"sequential_hops": 0, "parallel_groups": 0, "fanout_copies": 0, "fanout_waves": 0,
+                      "wait_ms": 0.0}
         self._parallel_seq = 0
 
         walk = _Walk(current=scenario.entry, visited=[scenario.entry], items=[])
@@ -128,8 +134,16 @@ class Planner:
                 self.shape["sequential_hops"] += 1
             elif step.fanout is not None:
                 node, count = step.fanout
-                self._hop(node, step, walk, suffix=f"×{count} concurrent copies, costed once")
+                concurrency = self._map_concurrency(walk.visited)
+                waves = max(1, math.ceil(count / concurrency)) if concurrency else 1
+                suffix = (f"×{count} concurrent copies, costed once" if waves == 1 else
+                          f"×{count} copies in {waves} waves of {concurrency} (Map MaxConcurrency)")
+                self._hop(node, step, walk, suffix=suffix)
+                last = _last_hop(walk.items)
+                if last is not None:
+                    last.copies, last.waves = count, waves
                 self.shape["fanout_copies"] += count
+                self.shape["fanout_waves"] += waves
             elif step.parallel is not None:
                 self._parallel(step.parallel, walk)
             elif step.wait_ms is not None:
@@ -147,6 +161,19 @@ class Planner:
         if len(branches) > 1:
             self.shape["parallel_groups"] += 1      # a single-branch group (Map replay) is not parallelism
         # branches rejoin: `current` stays where the fork happened
+
+    def _map_concurrency(self, visited: list[str]) -> int | None:
+        """MaxConcurrency of the Map in the most recent orchestrator the request
+        went through — the cap on how many fan-out copies run at once."""
+        for node_id in reversed(visited):
+            node = self.graph.nodes.get(node_id)
+            if node is None or node.kind != "orchestrator":
+                continue
+            for item in node.attrs.get("workflow") or []:
+                if item.get("type") == "Map" and item.get("concurrency"):
+                    return int(item["concurrency"])
+            return None
+        return None
 
     def _wait(self, step: Step, walk: _Walk) -> None:
         ms = float(step.wait_ms or 0)
@@ -309,7 +336,7 @@ class _Evaluator:
         total, hops = self.b.zero(), []
         for item in items:
             if isinstance(item, PlannedHop):
-                cost = self.b.cost(item)
+                cost = _scaled(self.b.cost(item), item.waves)
                 hops.append(EvaluatedHop(item, cost))
                 total = total + cost.total
             else:
@@ -331,6 +358,15 @@ class _Evaluator:
             summed = summed + t
         self.savings = self.savings + (summed - branch_max)
         return branch_max
+
+
+def _scaled(cost: HopCost, waves: int) -> HopCost:
+    """A fan-out hop that needs `waves` sequential rounds costs `waves` × one copy."""
+    if waves <= 1:
+        return cost
+    return HopCost(total=cost.total * waves,
+                   breakdown={k: round(v * waves, 3) for k, v in cost.breakdown.items()},
+                   percentiles={k: round(v * waves, 3) for k, v in cost.percentiles.items()})
 
 
 def build_result(plan: Plan, ev: Evaluation, backend: Backend, walker: str,

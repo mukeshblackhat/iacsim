@@ -408,6 +408,23 @@ match cannot resolve — both keep defaults and say so.
 
 ---
 
+### M8 done — capacity (uncommitted, awaiting review)
+- **Fan-out waves**: a Map with `MaxConcurrency 5` and 10 items now costs 2 rounds, not 1 — `run_workflow_10_text` = 6.4 s (calibrated) and `Result.shape.fanout_waves`; `run_workflow_3_nodes` unchanged at 184.0 ms.
+- **Capacity attributes** on nodes (`concurrency`, `instances`, `read/write_capacity`) from Terraform and CloudFormation; a `capacity:` block in `defaults.yaml` for account-level limits, overridable with `--profile`.
+- **`load` walker** (`simulator/walkers/load.py`, `load.py`, `capacity.py`): arrivals from `load.yaml` (`every`, `while: running` via Little's law, workflow mix), hold time per resource (a Lambda holds its slot for its whole invocation), M/M/c Erlang-C waits, expected and p99 per scenario per user count, `saturated` when ρ ≥ 1. One Result per scenario; the sweep lives in `Result.load`; `report.json` gains a top-level `capacity`.
+- **`saturation` analyzer**: first to break (exact, utilisation is linear in users), per-resource threshold crossings, per-scenario p99 crossings, ceilings citing the attribute.
+- **Foosh** with the fixture-derived `calibrated.yaml` and `load.yaml` (start every 2 min, poll every 2 s while running, save every 30 s):
+
+  | resource | 100 | 500 | 1,000 | 2,000 | 5,000 | 10,000 | capacity |
+  |---|---|---|---|---|---|---|---|
+  | async-workflow-api-staging | 4% | 22% | 44% | 88% ▲ | SAT | SAT | 100 slots (reserved_concurrent_executions) |
+  | Lambda unreserved pool | 2% | 11% | 21% | 42% | SAT | SAT | 900 slots (account 1000 − 100 reserved) |
+  | API Gateway / state machine / tables / S3 | <1% | <1% | ~1% | ~3% | ~7% | ~14% | rps-capped, never the problem |
+
+  **First to break: the `api` Lambda at ~2,270 users** — `poll_status` is 68% of its load; ceiling: raise `reserved_concurrent_executions` on `module.api.aws_lambda_function.this` 100 → 551 for 10,000 users, or poll less often. The unreserved worker pool follows at ~4,713 users (image/video Lambdas hold slots for 18–48 s). p99 at 2,000 users: start_workflow 617 ms, poll 555 ms; every user-facing route saturates by 5,000.
+- Tests: `tests/test_load.py` (intervals, mix validation, Erlang-C known values, capacity from attrs, waves, a hand-built graph saturating at the computable U, JSON cleanliness, Little's law), Foosh + CLI load tests. 184 tests, 92.4% coverage.
+- Not done: discrete-event simulation (burstiness, the Map's per-workflow cap as a queue), calibration of capacity numbers from CloudWatch (`ConcurrentExecutions`, `Throttles`).
+
 ## Milestones
 
 | # | Goal | Deliverable / acceptance | Status | Date |
@@ -419,6 +436,7 @@ match cannot resolve — both keep defaults and say so.
 | M4 | Compare designs | `iacsim diff classic-web classic-web-bad` shows the cross-region DB as the delta (graph-level move, A1 shift, the two RDS hops, co-locate recommendation); `--fail-on-regression` for CI | ✅ | 2026-09-04 |
 | M5 | Read CloudFormation / CDK output | `iacsim graph examples/foosh-cfn` (real `cdk synth` output) produces the same graph as `foosh-serverless` — 30/30 nodes, every difference enumerated and explained in the test | ✅ | 2026-09-04 |
 | M6 | Tail latency + polish | `--walker monte_carlo --samples N --seed S` → p50/p90/p95/p99 + `tail_risk`; `iacsim view` graph viewer; CLI tests (141 total); Terraform twin labels == real CDK labels | ✅ | 2026-09-04 |
+| M8 | Capacity — users until it breaks | `iacsim run --walker load` sweeps a users count, reports utilisation per resource and p99 per route, names what breaks first with the IaC attribute that raises the ceiling; fan-out waves | ✅ (uncommitted, awaiting review) | 2026-09-04 |
 | M7 | Real numbers | `iacsim calibrate` — pluggable `MetricSource`; fake source end-to-end (coverage table, overlay YAML, `by_label`, rung in headers, Monte-Carlo picks up measured cold starts); CloudWatch source shipped, **not run live** (option a) | ✅ | 2026-09-04 |
 
 Estimated: M1–M3 ≈ 1 week (demo-able), M0–M6 ≈ 2 weeks, M7 additive. Actual: all of M0–M7 on 2026-09-04.

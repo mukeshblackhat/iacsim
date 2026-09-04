@@ -104,12 +104,17 @@ def load_scenarios(graph: InfraGraph, target: Path, cfg: Config) -> list[Scenari
     return scenarios
 
 
-def simulate(graph: InfraGraph, scenarios: list[Scenario], cfg: Config, profile: Profile) -> list[Result]:
-    """Stage 6. The walker receives `price` so it can cost synthetic hops."""
+def simulate(graph: InfraGraph, scenarios: list[Scenario], cfg: Config, profile: Profile,
+             root: Path | None = None) -> list[Result]:
+    """Stage 6. The walker receives `price` so it can cost synthetic hops, and
+    the full scenario list + `root` so the `load` walker can share resources
+    across scenarios and find load.yaml next to scenarios.yaml."""
     walker = WALKERS.get(cfg.get("simulation.walker"))()
     price = make_pricer(graph, profile, cfg)
     return [walker.run(graph, s, price=price, profile=profile,
-                       samples=cfg.get("simulation.samples"), seed=cfg.get("simulation.seed"))
+                       samples=cfg.get("simulation.samples"), seed=cfg.get("simulation.seed"),
+                       scenarios=scenarios, root=root, load=cfg.get("simulation.load"),
+                       tail_factor=cfg.get("simulation.tail_factor"))
             for s in scenarios]
 
 
@@ -127,7 +132,7 @@ def analyse(results: list[Result], graph: InfraGraph, profile: Profile, cfg: Con
             description=scenario.description if scenario else None,
             source=scenario.source if scenario else "declared",
             hops=result.hops, shape=result.shape, warnings=result.warnings,
-            percentiles=result.percentiles, samples=result.samples,
+            percentiles=result.percentiles, samples=result.samples, load=result.load,
         ))
     return out
 
@@ -138,6 +143,7 @@ def run(target: Path, cfg: Config) -> PipelineOutput:
     profile = load_profile(cfg)
     cost_graph(graph, profile, cfg)
     scenarios = load_scenarios(graph, target, cfg)
-    results = simulate(graph, scenarios, cfg, profile)
+    root = target if target.is_dir() else target.parent
+    results = simulate(graph, scenarios, cfg, profile, root=root)
     findings = analyse(results, graph, profile, cfg, scenarios)
     return PipelineOutput(graph, scenarios, results, findings, profile)

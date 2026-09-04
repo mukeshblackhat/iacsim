@@ -220,3 +220,29 @@ def test_calibrate_with_nothing_measurable_exits_1(tmp_path):
 def test_help(cmd):
     r = invoke(*cmd)
     assert "Infrastructure-as-Code" in r.output or "Usage" in r.output
+
+
+# ---------------------------------------------------------------- M8: --walker load
+
+def test_run_load_walker_writes_capacity():
+    import json
+    target = EXAMPLES / "foosh-serverless"          # modules live at ../modules, so run in place
+    r = invoke("run", target, "--walker", "load", "--profile", target / "calibrated.yaml", "-o", "json", "-o", "text")
+    assert r.exit_code == 0, r.output
+    assert "users until it breaks" in r.output and "first to break" in r.output
+    doc = json.loads((target / ".iacsim" / "report.json").read_text())
+    assert doc["capacity"]["first_to_break"]["resource"] == "module.api.aws_lambda_function.this"
+    assert doc["scenarios"][0]["load"]["users"] == [100, 500, 1000, 2000, 5000, 10000]
+    assert "Infinity" not in json.dumps(doc)
+
+
+def test_run_load_walker_without_load_file_is_a_clean_error():
+    r = invoke("run", EXAMPLES / "classic-web", "--walker", "load")
+    assert r.exit_code == 2 and "needs a load profile" in r.output
+
+
+def test_run_load_walker_with_a_bad_load_file_exits_2(tmp_path):
+    bad = tmp_path / "load.yaml"
+    bad.write_text("per_user: {nope: {every: 1s}}\n")
+    r = invoke("run", EXAMPLES / "classic-web", "--walker", "load", "--load", bad)
+    assert r.exit_code == 2 and "unknown scenario" in r.output

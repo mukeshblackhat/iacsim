@@ -31,6 +31,9 @@ class TextReporter(Reporter):
         console = Console(file=buf, force_terminal=self.color, width=WIDTH, no_color=not self.color,
                           highlight=False)
         builder = BriefBuilder(graph, top_n=self.top_n, all_hops=self.all_hops)
+        capacity = builder.build_capacity(findings)
+        if capacity is not None:
+            self._draw(console, capacity, rule="capacity")
         for f in findings:
             self._draw(console, builder.build(f))
         if graph.warnings:
@@ -70,7 +73,8 @@ class TextReporter(Reporter):
         table = Table(title=section.title, title_justify="left", caption=section.intro,
                       caption_justify="left", show_lines=False, pad_edge=False, expand=False)
         for col in section.columns:
-            justify = "right" if col in ("ms", "p99", "p99 − p50", "share", "share of spread", "saves ~ms", "of total", "#") else "left"
+            justify = ("right" if col in ("ms", "p99", "p99 − p50", "share", "share of spread", "saves ~ms",
+                                          "of total", "#", "users") or col.replace(",", "").isdigit() else "left")
             table.add_column(col, justify=justify, overflow="fold", no_wrap=(col in ("bar", "layer")))
         for row in section.rows:
             table.add_row(*row.cells)

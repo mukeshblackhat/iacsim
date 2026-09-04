@@ -10,6 +10,7 @@ pip install -e ".[dev]"
 iacsim plugins                       # what is registered
 iacsim graph examples/classic-web    # M1
 iacsim run   examples/classic-web    # M2+
+iacsim run   examples/foosh-serverless --walker load --profile examples/foosh-serverless/calibrated.yaml   # M8: users until it breaks
 iacsim diff  examples/classic-web examples/classic-web-bad   # M4
 iacsim calibrate examples/foosh-serverless                     # M7 — measured numbers → calibrated.yaml: what moved, A1/A2/A3 shift, changed hops
 iacsim diff  ./main ./pr --fail-on-regression 50ms           # CI: exit 2 if any scenario grows > 50 ms (or 10%)
@@ -165,7 +166,7 @@ iacsim/
   scenarios/     yaml_file.py  inferred.py            → [Scenario]
   latency/       defaults.yaml  profile.py  rules/  calibrate/{calibrator,writer,fake,cloudwatch,cloudwatch_queries}.py
   simulator/     traversal.py (shared planner + evaluator)  walkers/expected_value.py  monte_carlo.py
-  analyzer/      per_hop  per_node  per_category  critical_path  recommendations  tail_risk
+  analyzer/      per_hop  per_node  per_category  critical_path  recommendations  tail_risk  saturation  recommendations  tail_risk
   reporter/      text  markdown  json
   viewer/        index.html (self-contained graph viewer) + serve helpers
   cli.py  differ.py
@@ -182,3 +183,49 @@ tests/
 Every choice is an extension point: an ABC in `core/interfaces.py`, a
 registry, and a key in `iacsim.yaml`. Milestone markers `[M1]`…`[M7]` in
 module docstrings say what is built and what is next.
+
+## Capacity — how many users until it breaks
+
+Everything above gives one request an empty road. `--walker load` adds traffic:
+
+```
+iacsim run examples/foosh-serverless --walker load --profile examples/foosh-serverless/calibrated.yaml
+```
+
+reads `load.yaml` next to `scenarios.yaml`:
+
+```yaml
+users: [100, 500, 1000, 2000, 5000, 10000]     # sweep
+per_user:
+  start_workflow: { every: 2m }
+  poll_status:    { every: 2s, while: running }   # only while that user has a run in flight
+  save_workflow:  { every: 30s }
+workflow_mix:                                    # what a started run looks like
+  - { scenario: run_workflow_3_nodes, share: 0.6 }
+  - { scenario: run_workflow_1_video, share: 0.2 }
+  - { scenario: run_workflow_10_text, share: 0.2 }
+thresholds: { p99_ms: 2000, utilisation: 0.8 }
+```
+
+and prints, before the per-scenario briefs, a capacity brief: utilisation of
+every resource at each user count, p99 per scenario at each user count, and
+**what breaks first** — the resource, the user count (exact, because
+utilisation is linear in users), why (which scenario feeds it, how long it
+holds a slot), and what raises the ceiling, citing the IaC attribute
+(`reserved_concurrent_executions=100 on module.api…`).
+
+Capacity comes from the IaC where it is declared — Lambda reserved
+concurrency, ECS `desired_count`, RDS `instance_class`, DynamoDB provisioned
+throughput, Step Functions Map `MaxConcurrency` — and from the `capacity:`
+block in `latency/defaults.yaml` for account-level limits (Lambda account
+concurrency 1000, on-demand DynamoDB 40k rps, …). Override either with
+`--profile`.
+
+Assumptions, stated: analytic M/M/c queueing per resource (Poisson arrivals,
+exponential service — no discrete-event simulation); a Lambda holds its
+concurrency slot for its whole invocation including everything it waits on
+downstream; unreserved Lambdas share one pool of `account_concurrency − Σ
+reserved`; p99 ≈ 1.3 × the no-contention expected value plus p99 queue waits
+(`simulation.tail_factor`). Fan-out through a Map now costs
+`ceil(count / MaxConcurrency)` waves, which also sharpens the plain walkers.
+

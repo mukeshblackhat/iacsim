@@ -52,3 +52,51 @@ poll_status:
     - module.api.aws_lambda_function.this
     - module.table["executions"].aws_dynamodb_table.this
     - module.api.aws_lambda_function.this
+
+save_workflow:
+  description: "PUT /workflows/{id} — user edits the canvas while a run is in flight; autosave"
+  entry: aws_api_gateway_rest_api.main
+  steps:
+    - module.api.aws_lambda_function.this
+    - module.table["workspace_members"].aws_dynamodb_table.this  # auth check
+    - node: module.table["workflows"].aws_dynamodb_table.this    # write the definition
+      op: write
+    - module.api.aws_lambda_function.this
+
+run_workflow_10_text:
+  description: "Step Functions execution of a 10-node text workflow — Map MaxConcurrency 5 → 2 waves"
+  entry: aws_sfn_state_machine.workflow
+  steps:
+    - module.worker["parser"].aws_lambda_function.this
+    - module.table["workflows"].aws_dynamodb_table.this
+    - fanout:
+        node: module.worker["input_preparer"].aws_lambda_function.this
+        count: 10
+    - fanout:
+        node: module.worker["text_enhancement"].aws_lambda_function.this
+        count: 10
+    - fanout:
+        node: module.worker["output_updater"].aws_lambda_function.this
+        count: 10
+    - node: module.table["executions"].aws_dynamodb_table.this
+      op: write
+    - module.worker["finalizer"].aws_lambda_function.this
+    - node: module.table["executions"].aws_dynamodb_table.this
+      op: write
+
+run_workflow_1_video:
+  description: "Step Functions execution of a single video_creation node"
+  entry: aws_sfn_state_machine.workflow
+  steps:
+    - module.worker["parser"].aws_lambda_function.this
+    - module.table["workflows"].aws_dynamodb_table.this
+    - module.worker["input_preparer"].aws_lambda_function.this
+    - module.worker["video_creation"].aws_lambda_function.this
+    - node: aws_s3_bucket.outputs
+      op: write
+    - module.worker["output_updater"].aws_lambda_function.this
+    - node: module.table["executions"].aws_dynamodb_table.this
+      op: write
+    - module.worker["finalizer"].aws_lambda_function.this
+    - node: module.table["executions"].aws_dynamodb_table.this
+      op: write

@@ -1,6 +1,7 @@
 """`iacsim` command line.
 
     iacsim run   ./infra [--profile p.yaml] [--walker monte_carlo --samples N --seed S]
+                         [--walker load --load load.yaml]   users-until-it-breaks (M8)
                          [--format terraform] [--all-hops] [-o text -o json -o markdown]
     iacsim graph ./infra                 dump graph.json only (M1 milestone check)
     iacsim diff  ./before ./after        compare two snapshots
@@ -73,9 +74,10 @@ def _write_outputs(output, cfg, target: Path, all_hops: bool = False) -> None:
 def run(
     target: Path = typer.Argument(..., exists=True, help="Terraform dir or CloudFormation template"),
     profile: list[str] = typer.Option(None, "--profile", "-p", help="latency profile(s), stackable"),
-    walker: str = typer.Option(None, help="expected_value | monte_carlo"),
+    walker: str = typer.Option(None, help="expected_value | monte_carlo | load"),
     samples: int = typer.Option(None, help="monte_carlo sample count"),
     seed: int = typer.Option(None, help="monte_carlo random seed (reproducible runs)"),
+    load: Path = typer.Option(None, "--load", help="load walker: arrival rates file (default load.yaml next to scenarios.yaml)"),
     fmt: str = typer.Option(None, "--format", help="force parser: terraform | cloudformation"),
     all_hops: bool = typer.Option(False, "--all-hops", help="show every hop in path order, not just the top-N"),
     output: list[str] = typer.Option(None, "--output", "-o", help="reporters: text | json | markdown (repeatable)"),
@@ -84,13 +86,27 @@ def run(
     """Simulate every scenario and print the bottleneck report."""
     from iacsim.core import pipeline
     _bootstrap(target)
+    from iacsim.simulator.load import LoadProfileError
     cfg = load_config(_base_dir(target), {
         "latency.profiles": ["defaults", *profile] if profile else None,
         "simulation.walker": walker, "simulation.samples": samples, "simulation.seed": seed,
+        "simulation.load": str(load) if load else None,
         "format": fmt, "parsers.cloudformation.region": region,
         "report.outputs": output or None,
     })
-    _write_outputs(pipeline.run(target, cfg), cfg, target, all_hops=all_hops)
+    if cfg.get("simulation.walker") == "load":
+        load_path = Path(cfg.get("simulation.load") or "load.yaml")
+        if not load_path.is_absolute():
+            load_path = _base_dir(target) / load_path
+        if not load_path.is_file():
+            raise typer.BadParameter(f"--walker load needs a load profile; none at {load_path} "
+                                     f"(write one or pass --load)", param_hint="--load")
+    try:
+        output_ = pipeline.run(target, cfg)
+    except LoadProfileError as e:
+        typer.echo(f"load profile: {e}", err=True)
+        raise typer.Exit(code=2) from None
+    _write_outputs(output_, cfg, target, all_hops=all_hops)
 
 
 @app.command()

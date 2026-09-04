@@ -20,7 +20,9 @@ Three things happen here:
        AWS::ElasticLoadBalancingV2::Listener.DefaultActions → default_action
        AWS::ECS::Service.LoadBalancers           → load_balancer
        AWS::Lambda::Function.Environment.Variables → environment.variables (variable names untouched)
+       AWS::DynamoDB::Table.ProvisionedThroughput → read_capacity / write_capacity
        Tags [{Key, Value}]                        → {Key: Value}
+   (ReservedConcurrentExecutions and DesiredCount snake_case to the Terraform names on their own.)
 
    Nested keys are otherwise left alone: IAM `Statement` / `Action` / `Resource`,
    ASL state names and env-var names must keep their spelling.
@@ -142,6 +144,10 @@ def canonical_attrs(ctype: str, properties: dict[str, Any]) -> dict[str, Any]:
         attrs["environment"] = {snake_case(k): v for k, v in attrs["environment"].items()}
     if isinstance(attrs.get("tags"), list):
         attrs["tags"] = {t["Key"]: t.get("Value") for t in attrs["tags"] if isinstance(t, dict) and "Key" in t}
+    if ctype == "aws_dynamodb_table" and isinstance(attrs.get("provisioned_throughput"), dict):
+        pt = attrs.pop("provisioned_throughput")          # → Terraform's read_capacity / write_capacity
+        attrs.setdefault("read_capacity", pt.get("ReadCapacityUnits"))
+        attrs.setdefault("write_capacity", pt.get("WriteCapacityUnits"))
     return attrs
 
 

@@ -42,9 +42,12 @@ DEFAULTS: dict[str, Any] = {
         "walker": "expected_value",
         "samples": 10_000,           # monte_carlo only
         "seed": None,                # monte_carlo only; set for reproducible runs
+        "load": "load.yaml",         # load walker only: arrival rates, next to scenarios.yaml
+        "tail_factor": 1.3,          # load walker only: p99 ≈ tail_factor × expected before queueing
     },
     "analysis": {
-        "analyzers": ["per_hop", "per_node", "per_category", "critical_path", "recommendations", "tail_risk"],
+        "analyzers": ["per_hop", "per_node", "per_category", "critical_path", "recommendations", "tail_risk",
+                      "saturation"],
         "top_n": 10,
     },
     "report": {

@@ -196,6 +196,9 @@ class Profile:
     # {"distance_sigma": 0.2, "processing_sigma": 0.3} (σ of the lognormal, in log space).
     # A per-subtype `sigma` inside processing.<subtype>.defaults / per_resource wins.
     variance: dict[str, Any] = field(default_factory=dict)
+    # Capacity limits per subtype (latency/defaults.yaml `capacity:`), read only by
+    # the `load` walker: account concurrency, rps per instance class, max connections…
+    capacity: dict[str, Any] = field(default_factory=dict)
 
     def processing_for(self, node: Node) -> dict[str, Any]:
         """defaults[subtype] ← by_label[node.label] ← per_resource[node.id]  (later wins per key).
@@ -242,6 +245,10 @@ class Result:
     # {"hop_count", "sequential_hops", "parallel_groups", "parallel_savings_ms", "fanout_copies", "wait_ms"}
     shape: dict[str, float] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    # Filled only by the `load` walker (M8): the users sweep for this scenario —
+    # {"users": [...], "rps": {U: λ}, "latency": {U: {"expected_ms", "p99_ms", "saturated"}},
+    #  "utilisation": {U: {resource: ρ}}, "resources": {resource: {...}}, "thresholds": {...}}
+    load: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -279,6 +286,7 @@ class Findings:
     warnings: list[str] = field(default_factory=list)
     percentiles: dict[str, float] = field(default_factory=dict)   # {"p50", "p90", "p95", "p99"} when sampled
     samples: int | None = None
+    load: dict[str, Any] = field(default_factory=dict)   # the `load` walker's sweep (see Result.load)
     schema_version: str = SCHEMA_VERSION
 
     def by_analyzer(self) -> dict[str, list[Finding]]:
@@ -302,6 +310,7 @@ class Findings:
             "hops": [asdict(h) | {"label": h.label} for h in self.hops],
             "findings": {name: [asdict(f) for f in items] for name, items in self.by_analyzer().items()},
             "warnings": self.warnings,
+            "load": self.load,
         }
 
 

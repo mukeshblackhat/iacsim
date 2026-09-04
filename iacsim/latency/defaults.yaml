@@ -75,3 +75,50 @@ processing:
   step_functions:
     defaults: { transition: 25 }
     per_resource: {}
+
+# Capacity — read only by the `load` walker (M8) to turn arrival rates into
+# contention. Per-resource facts (reserved concurrency, desired_count,
+# instance_class, provisioned throughput) come from the IaC; these are the
+# account-level and per-class limits the IaC does not state. Override any key
+# with --profile, same as the latency numbers.
+capacity:
+  lambda:
+    account_concurrency: 1000       # AWS default regional quota "Concurrent executions" (raise via Service Quotas)
+  ec2:
+    rps_per_instance:               # rough requests/sec one app server sustains, by instance family
+      t2: 150
+      t3: 200
+      m5: 800
+      m6i: 900
+      c5: 1200
+      c6i: 1300
+      default: 300
+  fargate:
+    rps_per_task: 300               # one 1 vCPU task running a typical HTTP service
+  rds:
+    max_connections:                # Postgres default_max_connections by class (≈ memory / 9.5 MB)
+      db.t3.micro: 80
+      db.t3.small: 150
+      db.t3.medium: 400
+      db.m5.large: 800
+      db.m5.xlarge: 1600
+      db.r5.large: 1600
+      default: 400
+  dynamodb:
+    ondemand_rps: 40000             # on-demand per-table soft ceiling (default 40k RCU/WCU); provisioned tables use read/write_capacity
+  s3:
+    rps: 5500                       # GET/PUT per prefix per second
+  elasticache:
+    rps: 100000
+  alb:
+    rps: 100000                     # ALBs scale; treat as effectively unlimited until quotas
+  api_gateway:
+    rps: 10000                      # default account-level REST API throttle
+  api_gateway_v2:
+    rps: 10000
+  sqs:
+    rps: 30000                      # standard queue, batched
+  sns:
+    rps: 30000
+  step_functions:
+    start_rps: 1000                 # StartExecution bucket refill (Standard workflows, us-east-1)

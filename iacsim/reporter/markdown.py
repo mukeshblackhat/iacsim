@@ -16,7 +16,11 @@ class MarkdownReporter(Reporter):
 
     def render(self, findings: list[Findings], graph: InfraGraph) -> str:
         builder = BriefBuilder(graph, top_n=self.top_n, all_hops=self.all_hops)
-        parts = [self._brief(builder.build(f)) for f in findings]
+        parts = []
+        capacity = builder.build_capacity(findings)
+        if capacity is not None:
+            parts.append(self._brief(capacity))
+        parts += [self._brief(builder.build(f)) for f in findings]
         if graph.warnings:
             parts.append("## Graph warnings\n\n" + "\n".join(f"- {w}" for w in graph.warnings) + "\n")
         return "\n".join(parts)

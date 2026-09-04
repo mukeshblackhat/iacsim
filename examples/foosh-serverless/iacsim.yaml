@@ -7,3 +7,6 @@ calibrate:
   sources:
     fake:
       fixture: calibrate-fixture.yaml
+
+simulation:
+  load: load.yaml                   # `--walker load` reads arrival rates from here

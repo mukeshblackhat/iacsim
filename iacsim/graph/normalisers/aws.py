@@ -101,7 +101,7 @@ IGNORED_PREFIXES = (
 # Attributes worth keeping on the node (what latency rules and reports might use).
 KEEP_ATTRS = ("memory_size", "timeout", "runtime", "engine", "engine_version", "instance_class",
               "instance_type", "billing_mode", "reserved_concurrent_executions", "load_balancer_type",
-              "node_type", "type")
+              "node_type", "type", "desired_count", "read_capacity", "write_capacity")
 
 ENTRY_KINDS = (NodeKind.GATEWAY, NodeKind.LB, NodeKind.CDN)
 INTERNET = "internet"
@@ -121,10 +121,12 @@ class AwsNormaliser(Normaliser):
             else:
                 kind, subtype = NodeKind.NETWORK, r.type
                 graph.warnings.append(f"{r.address}: unknown type {r.type}; kept as a network node")
+            attrs = {k: r.attrs[k] for k in KEEP_ATTRS if k in r.attrs and r.attrs[k] is not None}
+            attrs.update(_capacity_attrs(subtype, attrs))
             graph.add_node(Node(
                 id=r.address, kind=kind, subtype=subtype,
                 placement=_placement(r, by_address),
-                attrs={k: r.attrs[k] for k in KEEP_ATTRS if k in r.attrs and r.attrs[k] is not None},
+                attrs=attrs,
                 label=_label(r),
             ))
 
@@ -139,6 +141,25 @@ class AwsNormaliser(Normaliser):
                 graph.add_edge(Edge(INTERNET, node.id, EdgeKind.INVOKE, Confidence.HIGH,
                                     f"{node.subtype} {node.label or node.id} is a public entry point",
                                     rule="normaliser"))
+
+
+# ------------------------------------------------------------------ capacity (M8)
+
+def _capacity_attrs(subtype: str, attrs: dict[str, Any]) -> dict[str, Any]:
+    """Neutral capacity keys the `load` walker reads, derived from what the IaC
+    declares: `concurrency` (Lambda reserved slots; absent → shares the account
+    pool), `instances` (EC2 = 1 per resource, ECS = desired_count). DynamoDB
+    read/write_capacity are kept as-is (None on PAY_PER_REQUEST)."""
+    out: dict[str, Any] = {}
+    if subtype == "lambda":
+        reserved = attrs.get("reserved_concurrent_executions")
+        if isinstance(reserved, int) and reserved >= 0:
+            out["concurrency"] = reserved
+    elif subtype == "ec2":
+        out["instances"] = 1
+    elif subtype == "fargate" and isinstance(attrs.get("desired_count"), int):
+        out["instances"] = attrs["desired_count"]
+    return out
 
 
 # ------------------------------------------------------------------ placement

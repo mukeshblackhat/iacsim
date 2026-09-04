@@ -7,3 +7,7 @@ __pycache__/
 .terraform.lock.hcl
 *.tfstate*
 .DS_Store
+
+# local share-outs, never committed
+foosh-run-report.md
+.coverage

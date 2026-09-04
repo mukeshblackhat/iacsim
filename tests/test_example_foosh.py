@@ -129,3 +129,52 @@ def test_run_workflow_costs_parallel_as_max_and_fanout_once(foosh_run):
     for h in r.hops:
         if h.dst.startswith("module.worker["):
             assert h.src == SFN, (h.src, h.dst)
+
+
+# ---------------------------------------------------------------- M8: load
+
+def test_default_walker_numbers_did_not_move_with_waves(foosh_run):
+    from conftest import result
+    assert result(foosh_run, "run_workflow_3_nodes").total_ms == pytest.approx(184.0)   # 3 copies ≤ Map 5 → 1 wave
+    assert result(foosh_run, "start_workflow").total_ms == pytest.approx(151.0)
+    ten = result(foosh_run, "run_workflow_10_text")
+    assert ten.shape["fanout_waves"] == 6 and ten.shape["fanout_copies"] == 30          # 3 fan-outs × ceil(10/5)
+
+
+@pytest.fixture(scope="module")
+def foosh_load():
+    from pathlib import Path
+
+    from conftest import EXAMPLES
+
+    from iacsim.core.config import load_config
+    from iacsim.core.pipeline import run
+    target = EXAMPLES / "foosh-serverless"
+    cfg = load_config(target, {"simulation.walker": "load",
+                               "latency.profiles": ["defaults", str(Path(target / "calibrated.yaml"))]})
+    return run(target, cfg)
+
+
+def test_load_sweep_breaks_on_a_lambda_first(foosh_load):
+    from conftest import result
+    r = result(foosh_load, "start_workflow")
+    load = r.load
+    assert load["users"] == [100, 500, 1000, 2000, 5000, 10000]
+    findings = next(f for f in foosh_load.findings if f.scenario == "start_workflow").by_analyzer()["saturation"]
+    first = next(f for f in findings if f.subject == "first_to_break")
+    assert first.refs == [API]                                     # reserved_concurrent_executions=100, fed by polling
+    assert 1500 < first.latency_ms < 3500
+    assert "poll_status" in first.detail
+    pool = load["resources"]["lambda:unreserved-pool"]
+    assert pool["slots"] == 900 and len(pool["members"]) == 15
+    util_max = load["utilisation"][10000]
+    assert util_max[API] > util_max["lambda:unreserved-pool"] > 1.0      # both past saturation at 10k, api first
+    assert util_max[table("executions")] < 0.1                          # on-demand DynamoDB never the problem
+    assert r.load["latency"][100]["saturated"] is False and r.load["latency"][10000]["saturated"] is True
+
+
+def test_load_ceilings_cite_the_attribute(foosh_load):
+    findings = next(f for f in foosh_load.findings if f.scenario == "poll_status").by_analyzer()["saturation"]
+    ceilings = [f.detail for f in findings if f.subject == "ceiling"]
+    assert any("reserved_concurrent_executions on module.api" in d for d in ceilings)
+    assert any("poll_status" in d for d in ceilings)

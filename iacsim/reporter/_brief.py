@@ -12,6 +12,12 @@ A "brief" is one scenario rendered as ordered sections:
     tail_risk       only when the walker sampled — which hops drive p99 − p50
     warnings
 
+With the `load` walker (M8) there is one extra brief *before* the scenarios,
+`build_capacity(findings)`: utilisation per resource across the users sweep,
+p99 per scenario across the sweep, and the saturation findings (what breaks
+first, at how many users, what raises the ceiling). Each scenario brief then
+carries a "load" meta line with its p99 at each user count.
+
 Both reporters build the same `Section` list from a Findings and differ only
 in how they draw it, so the terminal and a PR comment always agree.
 """
@@ -69,9 +75,83 @@ class BriefBuilder:
             subtitle=f.description,
             meta=[("source", f.source), ("total", f"{f.total_ms:,.1f} ms"),
                   ("tail", self._percentiles(f)), ("samples", f"{f.samples:,}" if f.samples else ""),
-                  ("profile", " → ".join(f.profile_sources)), ("shape", self._shape(f.shape))],
+                  ("profile", " → ".join(f.profile_sources)), ("shape", self._shape(f.shape)),
+                  ("load", self._load_line(f.load))],
             sections=[s for s in sections if s.rows],
         )
+
+    # ------------------------------------------------------------ capacity (load walker)
+
+    def build_capacity(self, findings: list[Findings]) -> Brief | None:
+        """The users-sweep brief, from the first scenario that carries a load sweep."""
+        first = next((f for f in findings if f.load and f.load.get("resources")), None)
+        if first is None:
+            return None
+        load = first.load
+        users = list(load["users"])
+        threshold = float(load.get("thresholds", {}).get("utilisation", 0.8))
+        sections = [self._utilisation(load, users, threshold), self._p99_sweep(findings, users),
+                    self._saturation(first.by_analyzer().get("saturation", []), users)]
+        return Brief(
+            title="users until it breaks",
+            subtitle="analytic M/M/c per resource; utilisation is linear in users, so the break point is exact",
+            meta=[("users", ", ".join(f"{u:,}" for u in users)),
+                  ("thresholds", f"p99 {load.get('thresholds', {}).get('p99_ms', 0):,.0f} ms · utilisation {threshold:.0%}"),
+                  ("assumes", "; ".join(load.get("assumptions", [])))],
+            sections=[s for s in sections if s.rows],
+        )
+
+    def _utilisation(self, load: dict, users: list[int], threshold: float) -> Section:
+        s = Section("Utilisation by users", ["resource", *[f"{u:,}" for u in users], "capacity"],
+                    intro="▲ past the utilisation threshold · SAT = saturated (queue grows without bound)")
+        resources = load["resources"]
+        last = load["utilisation"][users[-1]]
+        for key, _ in sorted(last.items(), key=lambda kv: -kv[1])[:8]:
+            r = resources[key]
+            cells = [r["label"]]
+            for u in users:
+                rho = load["utilisation"][u].get(key, 0.0)
+                cells.append(f"{rho:.0%}" + (" SAT" if rho >= 1 else " ▲" if rho >= threshold else ""))
+            cells.append(f"{r['slots']:,.0f} slots" if r.get("slots") is not None else f"{r['rps']:,.0f} rps")
+            s.rows.append(Row(cells, note=clip(r["source"], 90), note_col=0))
+        return s
+
+    @staticmethod
+    def _p99_sweep(findings: list[Findings], users: list[int]) -> Section:
+        s = Section("p99 by users", ["scenario", *[f"{u:,}" for u in users]])
+        for f in findings:
+            lat = f.load.get("latency") if f.load else None
+            if not lat or not f.load.get("traffic", True):
+                continue
+            cells = [f.scenario]
+            for u in users:
+                row = lat.get(u) or {}
+                cells.append("SAT" if row.get("saturated") else
+                             f"{row['p99_ms']:,.0f} ms" if row.get("p99_ms") is not None else "")
+            s.rows.append(Row(cells))
+        return s
+
+    @staticmethod
+    def _saturation(lines: list[Finding], users: list[int]) -> Section:
+        s = Section("What breaks first", ["", "users", "finding"])
+        for f in lines:
+            if f.subject == "scenario_p99":
+                continue
+            kind = ("first to break" if f.subject == "first_to_break" else
+                    "ceiling" if f.subject == "ceiling" else f.subject.replace("resource:", ""))
+            s.rows.append(Row([kind, f"{f.latency_ms:,.0f}", f.detail]))
+        return s
+
+    @staticmethod
+    def _load_line(load: dict) -> str:
+        lat = load.get("latency") if load else None
+        if not lat or not load.get("traffic", True):
+            return ""
+        parts = []
+        for u, row in lat.items():
+            parts.append(f"@{u:,} SAT" if row.get("saturated") else
+                         f"@{u:,} p99 {row['p99_ms']:,.0f} ms" if row.get("p99_ms") is not None else f"@{u:,} —")
+        return " · ".join(parts)
 
     # ------------------------------------------------------------ sections
 

@@ -4,5 +4,6 @@ from iacsim.analyzer import (  # noqa: F401
     per_hop,
     per_node,
     recommendations,
+    saturation,
     tail_risk,
 )

@@ -134,7 +134,7 @@ Every stage talks to the next one **only through the Infra Graph (IR)**. That is
 | Scenario source | `ScenarioSource.load() -> [Scenario]` | `yaml_file`, `inferred_from_entrypoints` | `scenarios.sources: [list]` |
 | Latency profile source | `ProfileSource.load() -> dict` | `defaults`, `yaml_file` (a calibrated file is just a `yaml_file`) | `--profile` (stackable) |
 | Latency cost rules | `CostRule.cost(edge, profile) -> Latency` | `distance`, `processing`, `cold_start`, `serialisation` | `latency.rules: [list]` |
-| Simulation walker | `Walker.run(graph, scenario) -> Result` | `expected_value` (M2), `monte_carlo` (M6) | `--walker` / `simulation.walker:` |
+| Simulation walker | `Walker.run(graph, scenario) -> Result` | `expected_value` (M2), `monte_carlo` (M6), `load` (M8: capacity + arrival rates → contention) | `--walker` / `simulation.walker:` |
 | Analyzer | `Analyzer.analyse(Result) -> Findings` | `per_hop`, `per_node`, `per_category`, `critical_path`, `recommendations`, `tail_risk` (M6, only speaks when sampled) | `analysis.analyzers: [list]` |
 | Reporter | `Reporter.render(Findings) -> output` | `text`, `json`, `markdown`, `html` (M6) | `--output` |
 | Metric source (calibration) | `MetricSource.supports(kind)` / `.measure(kind, name, window, region) -> dict | None`, plus `prepare(root)` / `describe()` hooks | `cloudwatch`, `fake`; company plugins (Datadog, X-Ray…) in `plugins/` | `calibrate.source:` + `calibrate.sources.<name>:` options |
@@ -372,3 +372,15 @@ Questions are asked one at a time. Each answer gets recorded here and the sectio
 | Q5 | Input formats | **Terraform (primary, M1) + CloudFormation JSON/YAML adapter (M5)** | CloudFormation is what CDK / SAM / Serverless Framework emit, so Foosh's `cdk.out/*.template.json` is a real test case with no rewriting. Reading CDK source directly is deferred — `cdk synth` output already covers it |
 | Q6 | Simulation method | **Deterministic expected-value in M2; Monte-Carlo `--samples N` in M6 for p50/p95/p99** | Deterministic is explainable and testable first; profile schema already stores `p50/p99/cold_prob`, so Monte-Carlo is additive — same graph, same profile, different walker |
 | Q7 | First examples | **`classic-web` first (ALB → EC2 ×2 AZ → RDS, plus `classic-web-bad` with RDS cross-region), then `foosh-serverless`** | Trivial fixture gets the pipeline green end-to-end in M1; the Foosh rewrite exercises Step Functions / event-driven inference and later doubles as a correctness check for the CloudFormation adapter (both inputs must yield the same graph) |
+
+## 13. M8 — capacity (added 2026-09-04)
+
+Same graph, same scenarios, one more walker. `load.yaml` gives arrivals per
+user and a users sweep; `Result.load` carries utilisation per resource and
+latency per user count; the `saturation` analyzer names what breaks first and
+what attribute raises the ceiling. Capacity attributes come from the IaC
+(`reserved_concurrent_executions`, `desired_count`, `instance_class`,
+provisioned throughput, Map `MaxConcurrency`) and from a new `capacity:` block
+in `defaults.yaml` for account-level limits. Layer A3 gains *waves*: fan-out
+beyond a Map's concurrency costs `ceil(count / c)` rounds. Analytic M/M/c; no
+new dependencies; no upstream stage changed.
