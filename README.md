@@ -10,7 +10,9 @@ pip install -e ".[dev]"
 iacsim plugins                       # what is registered
 iacsim graph examples/classic-web    # M1
 iacsim run   examples/classic-web    # M2+
-iacsim diff  examples/classic-web examples/classic-web-bad   # M4
+iacsim diff  examples/classic-web examples/classic-web-bad   # M4: what moved, A1/A2/A3 shift, changed hops
+iacsim diff  ./main ./pr --fail-on-regression 50ms           # CI: exit 2 if any scenario grows > 50 ms (or 10%)
+iacsim diff  ./before ./after --scenario checkout -o markdown  # one scenario, PR-comment markdown → .iacsim/diff.md
 ```
 
 ## Layout — one folder per stage, one file per implementation

@@ -11,7 +11,14 @@ from pathlib import Path
 from typing import Any
 
 from iacsim.core.models import (
-    Edge, Findings, InfraGraph, Latency, Profile, RawResources, Result, Scenario,
+    DiffReport,
+    Edge,
+    Findings,
+    InfraGraph,
+    Profile,
+    RawResources,
+    Result,
+    Scenario,
 )
 from iacsim.core.registry import Registry
 
@@ -83,6 +90,11 @@ class Reporter(ABC):
 
     @abstractmethod
     def render(self, findings: list[Findings], graph: InfraGraph) -> str: ...
+
+    def render_diff(self, diff: DiffReport, before: InfraGraph, after: InfraGraph) -> str:
+        """Optional: render an `iacsim diff`. Built-ins implement it; a
+        third-party reporter that doesn't is simply not usable for diffs."""
+        raise NotImplementedError(f"{type(self).__name__} does not render diffs")
 
 
 class MetricSource(ABC):

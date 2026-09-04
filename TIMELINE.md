@@ -172,12 +172,60 @@ Legend: ✅ done · 🔨 in progress · ⏳ planned · 🧊 parked
   `critical_path` needs the walker's `group` labels, so the Monte-Carlo walker
   (M6) must set them too.
 
+### M4 done (same day, parallel agent)
+- **`iacsim diff before after`** runs both pipelines with the *same* profile
+  (before-side config wins) and aligns: graph nodes by id (`--align-by label`
+  for Terraform-vs-CloudFormation), edges by (src, dst, kind); scenarios by
+  name; `per_category` / `per_node` / `recommendations` by subject; hops by
+  label + occurrence index (2nd call to a table lines up with the 2nd call).
+  |Δ| < 0.05 ms is "unchanged". One-sided scenarios are listed, not errors.
+- **Report** (text via `rich`, `markdown`, `json` — all through
+  `Reporter.render_diff`): *What changed in the infrastructure* (moved /
+  added / removed nodes, edges) → per scenario: before / after / delta (red
+  up, green down on a TTY) → *Where the time goes — shift* (A1/A2/A3 before →
+  after, share shift) → *Hops that changed* (with breakdown `distance
+  0.6→150`) → *Bottleneck shift* → *Recommendations* appeared / disappeared.
+  Writes `<after>/.iacsim/diff.json` (`DiffReport.to_dict()`, documented in
+  `reporter/json_.py`) and `diff.md`.
+- **CI**: `--fail-on-regression 50ms|10%` exits 2 when any scenario total
+  grows past the threshold; `--scenario NAME` restricts; exit 0 otherwise.
+- What it prints for `classic-web → classic-web-bad` (condensed):
+  ```
+  What changed in the infrastructure
+    moved   database.db_instance (region)   us-east-1 → eu-west-1
+    moved   database.db_instance (az)       us-east-1a → eu-west-1a
+    added   classic-web-db (vpc) + 4 subnets + aws_vpc_peering_connection.web_to_db
+    edge added   network.vpc → classic-web-db (peer)
+
+  scenario: page_load      before 57.2 ms   after 356.0 ms   delta +298.8 ms (+522%)
+    A1 distance     42.2 → 341.0   +298.8   74% → 96%
+    A2 processing   15.0 →  15.0      0.0   26% →  4%
+    Hops that changed (2 of 5):
+      3→3  classic-web-us-east-1a → database.db_instance   5.6 → 155.0  +149.4  distance 0.6→150
+      4→4  classic-web-us-east-1a → database.db_instance   5.6 → 155.0  +149.4  distance 0.6→150
+    Bottleneck shift: database.db_instance 11.2 → 310.0 (+298.8)
+    Recommendations: appeared  co-locate database.db_instance with classic-web-us-east-1a  saves ~296 ms
+  page_load: 57.2 → 356.0 ms (+298.8)
+  ```
+  `foosh-serverless` vs itself → "no latency change", exit 0.
+- **Tests**: 96 passing (differ unit tests on hand-built Findings: label +
+  occurrence alignment, added/removed, one-sided, zero diff, category
+  arithmetic, threshold parsing, label-alignment across formats; example
+  tests: exact 298.8 ms delta, exactly the two RDS hops, graph-level move +
+  peer edge, co-locate recommendation appears, CLI exit codes 2 / 0).
+- **Known limitations**: node alignment is by id, so renaming a resource
+  shows as removed + added (use `--align-by label` when labels are stable);
+  only `region` / `az` / `vpc` count as a move (subnet changes are not
+  reported); hop alignment is by label, so a re-ordered path with the same
+  hops shows as unchanged.
+
 ### Next session
-- Start **M4** (`iacsim diff`): run the pipeline on two targets, align
-  scenarios by `name`, hops by `label` + path index, `per_node` /
-  `per_category` / `recommendations` by `subject` (all documented in
-  `reporter/json_.py`); print total delta, per-category delta, and the hops
-  that changed; a `markdown` variant for PR comments.
+- Start **M5** (CloudFormation adapter): `parsers/cloudformation/parser.py`
+  → RawResources from `cdk.out/*.template.json`; correctness check =
+  `iacsim diff examples/foosh-serverless <cdk.out> --align-by label` reports
+  an empty graph diff. Set node `label`s in the normaliser from
+  `FunctionName` / `TableName` / `BucketName` so labels match the Terraform
+  twin.
 
 ---
 
@@ -189,7 +237,7 @@ Legend: ✅ done · 🔨 in progress · ⏳ planned · 🧊 parked
 | M1 | Terraform → graph | `iacsim graph examples/classic-web` → nodes + edges with evidence in `graph.json`; modules, `for_each`, `templatefile` refs resolved; foosh-serverless parses with Step Functions edges in call order | ✅ | 2026-09-04 |
 | M2 | Simulate one request | `iacsim run examples/classic-web` prints total ms + per-hop table; expected-value walker handles sequential / parallel / fanout; inferred scenarios for entry points with no `scenarios.yaml` | ✅ | 2026-09-04 |
 | M3 | Say *why* it's slow | All 4 analyzers on real output + `recommendations`; text/markdown report is a bottleneck brief (A1/A2/A3 bar, top nodes, suggestions with savings, hop table); `report.json` schema 2 | ✅ | 2026-09-04 |
-| M4 | Compare designs | `iacsim diff classic-web classic-web-bad` shows the cross-region DB as the delta; per-hop before/after | ⏳ | |
+| M4 | Compare designs | `iacsim diff classic-web classic-web-bad` shows the cross-region DB as the delta (graph-level move, A1 shift, the two RDS hops, co-locate recommendation); `--fail-on-regression` for CI | ✅ | 2026-09-04 |
 | M5 | Read CloudFormation / CDK output | `iacsim graph ~/Foosh/.../cdk.out` produces the same graph as `foosh-serverless` (correctness check) | ⏳ | |
 | M6 | Tail latency + polish | `--walker monte_carlo --samples N` → p50/p95/p99; static graph viewer reading `graph.json`; validation, docs, tests | ⏳ | |
 | M7 | Real numbers | `iacsim calibrate` pulls Lambda Duration / InitDuration, DynamoDB latency from CloudWatch into a profile YAML; run against Foosh staging | ⏳ | |

@@ -14,8 +14,9 @@ from rich.table import Table
 from rich.text import Text
 
 from iacsim.core.interfaces import REPORTERS, Reporter
-from iacsim.core.models import Findings, InfraGraph
+from iacsim.core.models import DiffReport, Findings, InfraGraph
 from iacsim.reporter._brief import Brief, BriefBuilder, Section
+from iacsim.reporter._diff_brief import DiffBriefBuilder
 
 WIDTH = 120
 
@@ -38,16 +39,32 @@ class TextReporter(Reporter):
                 console.print(f"  - {w}")
         return buf.getvalue()
 
-    def _draw(self, console: Console, brief: Brief) -> None:
-        console.rule(Text(f"scenario: {brief.title}", style="bold"))
+    def render_diff(self, diff: DiffReport, before: InfraGraph, after: InfraGraph) -> str:
+        buf = io.StringIO()
+        console = Console(file=buf, force_terminal=self.color, width=WIDTH, no_color=not self.color,
+                          highlight=False)
+        for i, brief in enumerate(DiffBriefBuilder(before, after).build(diff)):
+            self._draw(console, brief, rule="diff" if i == 0 else "scenario")
+        return buf.getvalue()
+
+    def _draw(self, console: Console, brief: Brief, rule: str = "scenario") -> None:
+        console.rule(Text(f"{rule}: {brief.title}", style="bold"))
         if brief.subtitle:
             console.print(Text(brief.subtitle, style="italic"))
         for key, value in brief.meta:
             if value:
-                console.print(f"[bold]{key:8}[/bold] {value}")
+                console.print(Text(f"{key:8} ", style="bold"), end="")
+                console.print(Text(value, style=self._meta_style(key, value)))
         console.print()
         for section in brief.sections:
             self._section(console, section)
+
+    @staticmethod
+    def _meta_style(key: str, value: str) -> str:
+        """Deltas are red when latency grew, green when it shrank."""
+        if key != "delta":
+            return ""
+        return "red" if value.startswith("+") else "green" if value.startswith("-") else ""
 
     def _section(self, console: Console, section: Section) -> None:
         table = Table(title=section.title, title_justify="left", caption=section.intro,

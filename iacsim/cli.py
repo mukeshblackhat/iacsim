@@ -4,6 +4,8 @@
                          [--all-hops] [-o text -o json -o markdown]
     iacsim graph ./infra                 dump graph.json only (M1 milestone check)
     iacsim diff  ./before ./after        compare two snapshots
+                 [--fail-on-regression 50ms|10%] [--scenario NAME] [--align-by id|label]
+                 [-o text -o json -o markdown]   exit 2 when a total grows past the threshold
     iacsim validate ./infra              parse + normalise + check scenarios.yaml, no simulation
     iacsim calibrate --out p.yaml        (M7) CloudWatch → profile
     iacsim plugins                       list every registered implementation
@@ -105,13 +107,44 @@ def graph(
 def diff(
     before: Path = typer.Argument(..., exists=True),
     after: Path = typer.Argument(..., exists=True),
-    profile: list[str] = typer.Option(None, "--profile", "-p"),
+    profile: list[str] = typer.Option(None, "--profile", "-p", help="latency profile(s), applied to both sides"),
+    scenario: str = typer.Option(None, "--scenario", help="compare only this scenario"),
+    align_by: str = typer.Option("id", "--align-by", help="match nodes by id (same format) or label (Terraform vs CloudFormation)"),
+    fail_on_regression: str = typer.Option(None, "--fail-on-regression", help="exit 2 if any total grows more than e.g. 50ms or 10%"),
+    output: list[str] = typer.Option(None, "--output", "-o", help="reporters: text | json | markdown (repeatable)"),
 ) -> None:
-    """Run both snapshots, align scenarios by name, print per-hop deltas."""
-    from iacsim.differ import diff_targets
+    """Run both snapshots with the same profile and report what changed:
+    moved/added resources, per-category shift, changed hops, recommendations."""
+    import sys
+
+    from iacsim.differ import parse_threshold, run_diff, summarise
     _bootstrap(before)
-    overrides = {"latency.profiles": ["defaults", *profile] if profile else None}
-    typer.echo(diff_targets(before, load_config(before, overrides), after, load_config(after, overrides)))
+    threshold = parse_threshold(fail_on_regression) if fail_on_regression else None
+    overrides = {"latency.profiles": ["defaults", *profile] if profile else None,
+                 "report.outputs": output or None}
+    cfg_before, cfg_after = load_config(before, overrides), load_config(after, overrides)
+    report, g_before, g_after = run_diff(before, cfg_before, after, cfg_after,
+                                         scenario=scenario, align_by=align_by)
+
+    out_dir = after / cfg_after.get("report.out_dir")
+    out_dir.mkdir(exist_ok=True)
+    for name in cfg_after.get("report.outputs"):
+        reporter = REPORTERS.get(name)(**({"color": sys.stdout.isatty()} if name == "text" else {}))
+        rendered = reporter.render_diff(report, g_before, g_after)
+        if name == "text":
+            typer.echo(rendered, nl=False)
+        else:
+            path = out_dir / f"diff.{REPORT_EXTENSIONS.get(name, name)}"
+            path.write_text(rendered)
+            typer.echo(f"wrote {path}")
+
+    typer.echo(summarise(report))
+    if threshold:
+        regressed = report.regressions(threshold)
+        if regressed:
+            names = ", ".join(f"{s.name} ({s.delta_ms:+,.1f} ms)" for s in regressed)
+            typer.echo(f"REGRESSION past {fail_on_regression}: {names}", err=True)
+            raise typer.Exit(code=2)
 
 
 @app.command()

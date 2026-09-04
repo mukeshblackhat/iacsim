@@ -29,6 +29,22 @@ graph viewer (M6). Schema version 2:
 
 Stable keys for `diff` to align on: scenario `name`; hop `label` (+ path index);
 per_node `subject`; per_category `subject`; recommendation `subject`.
+
+diff.json (`render_diff`) is `DiffReport.to_dict()`:
+
+    {
+      "schema_version", "generated_at", "before", "after", "profile_sources",
+      "graph":     {nodes_added, nodes_removed, nodes_moved: [{node_id, field, before, after}],
+                    edges_added, edges_removed},
+      "scenarios": [{name, status ("both" | "only_before" | "only_after"), description,
+                     before_ms, after_ms, delta_ms, delta_pct,
+                     categories: [ValueDelta], hops: [HopDelta], nodes: [ValueDelta],
+                     recommendations: [{subject, status, saving_ms, detail}],
+                     shape_before, shape_after}]
+    }
+    ValueDelta = {subject, before_ms, after_ms, before_share, after_share, layer, detail, status, delta_ms}
+    HopDelta   = {label, occurrence, index_before, index_after, before_ms, after_ms,
+                  breakdown_before, breakdown_after, status, delta_ms}
 """
 
 from __future__ import annotations
@@ -37,7 +53,7 @@ import json
 from datetime import UTC, datetime
 
 from iacsim.core.interfaces import REPORTERS, Reporter
-from iacsim.core.models import SCHEMA_VERSION, Findings, InfraGraph
+from iacsim.core.models import SCHEMA_VERSION, DiffReport, Findings, InfraGraph
 
 
 @REPORTERS.register("json")
@@ -57,3 +73,8 @@ class JsonReporter(Reporter):
             },
             indent=2, default=str,
         )
+
+    def render_diff(self, diff: DiffReport, before: InfraGraph, after: InfraGraph) -> str:
+        payload = diff.to_dict()
+        payload["generated_at"] = datetime.now(UTC).isoformat(timespec="seconds")
+        return json.dumps(payload, indent=2, default=str)

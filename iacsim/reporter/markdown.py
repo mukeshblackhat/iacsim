@@ -4,8 +4,9 @@ markdown for PR comments and docs."""
 from __future__ import annotations
 
 from iacsim.core.interfaces import REPORTERS, Reporter
-from iacsim.core.models import Findings, InfraGraph
+from iacsim.core.models import DiffReport, Findings, InfraGraph
 from iacsim.reporter._brief import Brief, BriefBuilder, Section
+from iacsim.reporter._diff_brief import DiffBriefBuilder
 
 
 @REPORTERS.register("markdown")
@@ -19,6 +20,9 @@ class MarkdownReporter(Reporter):
         if graph.warnings:
             parts.append("## Graph warnings\n\n" + "\n".join(f"- {w}" for w in graph.warnings) + "\n")
         return "\n".join(parts)
+
+    def render_diff(self, diff: DiffReport, before: InfraGraph, after: InfraGraph) -> str:
+        return "\n".join(self._brief(b) for b in DiffBriefBuilder(before, after).build(diff))
 
     def _brief(self, brief: Brief) -> str:
         lines = [f"# {brief.title}", ""]
