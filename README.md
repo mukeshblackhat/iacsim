@@ -2,7 +2,8 @@
 
 Reads Terraform (or CloudFormation), builds a graph of your infrastructure,
 simulates a request through it, and tells you where the milliseconds go —
-before you deploy. See `SPEC.md` for the design, `TIMELINE.md` for status and
+before you deploy. See `SPEC.md` for the design, `DECISIONS.md` for every choice and why,
+`CODE_FLOW.md` for what calls what, `TIMELINE.md` for status and
 milestones, and `problem statment.md` for the why.
 
 ```
