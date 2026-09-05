@@ -85,6 +85,20 @@ def result(output, scenario: str):
     return next(r for r in output.results if r.scenario == scenario)
 
 
+def example_copy(name: str, dest: Path) -> Path:
+    """A throwaway copy of an example so tests never write into examples/*/.iacsim/.
+    Module sources (`../modules/...`) are rewritten to absolute paths."""
+    import shutil
+    src = EXAMPLES / name
+    target = dest / name
+    shutil.copytree(src, target, ignore=shutil.ignore_patterns(".iacsim", "__pycache__"))
+    for f in target.rglob("*.tf"):
+        f.write_text(f.read_text().replace('"../modules/', f'"{EXAMPLES / "modules"}/'))
+    for f in target.rglob("iacsim.yaml"):
+        f.write_text(f.read_text().replace("../foosh-serverless/", f"{EXAMPLES / 'foosh-serverless'}/"))
+    return target
+
+
 # ---------------------------------------------------------------- hand-built graph
 
 def tiny_graph(**overrides):

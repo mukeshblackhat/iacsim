@@ -49,6 +49,8 @@ class YamlScenarioSource(ScenarioSource):
         return [self._scenario(name, body, graph) for name, body in doc.items()]
 
     def _scenario(self, name: str, body: dict[str, Any], graph: InfraGraph) -> Scenario:
+        if not isinstance(body, dict) or "entry" not in body:
+            raise ValueError(f"scenario '{name}': missing 'entry' (the node the request starts at)")
         self._check(body["entry"], graph, name)
         steps = [self._step(s, graph, name) for s in body.get("steps", [])]
         return Scenario(name=name, entry=body["entry"], steps=steps,

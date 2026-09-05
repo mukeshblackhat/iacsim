@@ -164,12 +164,26 @@ def analyse(results: list[Result], graph: InfraGraph, profile: Profile, cfg: Con
     return out
 
 
-def run(target: Path, cfg: Config) -> PipelineOutput:
-    """The whole thing, for `iacsim run`."""
+def _select_scenarios(scenarios: list[Scenario], names: list[str]) -> list[Scenario]:
+    import difflib
+    by_name = {s.name: s for s in scenarios}
+    for name in names:
+        if name not in by_name:
+            hint = difflib.get_close_matches(name, by_name, n=1)
+            suffix = f" — did you mean '{hint[0]}'?" if hint else ""
+            raise ValueError(f"unknown scenario '{name}'; have: {', '.join(by_name)}{suffix}")
+    return [by_name[n] for n in names]
+
+
+def run(target: Path, cfg: Config, only: list[str] | None = None) -> PipelineOutput:
+    """The whole thing, for `iacsim run`. `only` keeps just the named scenarios
+    (`--scenario`); an unknown name is a ValueError with a did-you-mean hint."""
     graph, _raw = build_graph(target, cfg)
     profile = load_profile(cfg)
     cost_graph(graph, profile, cfg)
     scenarios = load_scenarios(graph, target, cfg)
+    if only:
+        scenarios = _select_scenarios(scenarios, only)
     root = target if target.is_dir() else target.parent
     results = simulate(graph, scenarios, cfg, profile, root=root)
     findings = analyse(results, graph, profile, cfg, scenarios)

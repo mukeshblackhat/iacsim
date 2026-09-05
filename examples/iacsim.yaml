@@ -26,7 +26,8 @@ report:
 calibrate:                      # `iacsim calibrate <target>` — rung 2, measured numbers
   source: cloudwatch            # any registered metric source: cloudwatch | fake | <your plugin>
   window: 7d                    # 7d | 24h | 30m
-  out: calibrated.yaml          # written next to the target; then: --profile calibrated.yaml
+  out: calibrated.yaml          # written next to the target; then `iacsim run <target> --profile calibrated.yaml`
+                                # (relative --profile/--load/--out resolve against the target dir first, then cwd)
   sources:                      # per-source options → ctor kwargs. Never put credentials here.
     cloudwatch:
       region: null              # null = each node's own region; AWS creds from `aws configure` / AWS_PROFILE

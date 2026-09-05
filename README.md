@@ -18,7 +18,24 @@ iacsim diff  ./main ./pr --fail-on-regression 50ms           # CI: exit 2 if any
 iacsim diff  ./before ./after --scenario checkout -o markdown  # one scenario, PR-comment markdown → .iacsim/diff.md
 iacsim run   examples/foosh-serverless --walker monte_carlo --samples 10000 --seed 1   # M6: p50/p95/p99 + tail risk
 iacsim view  examples/classic-web-bad                         # M6: graph viewer in the browser
+iacsim run   examples/foosh-serverless --scenario poll_status  # only the named scenario(s)
+iacsim validate ./infra --strict                             # exit 1 on any parser warning, not only unwired steps
+iacsim --version
 ```
+
+## Exit codes and paths
+
+| code | meaning |
+|---|---|
+| 0 | ok |
+| 1 | problems found — `validate`: a scenario step no edge touches (or any warning with `--strict`); `calibrate`: nothing could be measured |
+| 2 | input error — unknown node / implementation / file, a bad flag value — or `diff --fail-on-regression` tripped |
+| 3 | metric source unusable (`calibrate`: missing SDK, no credentials, access denied) |
+
+Every error is one line on stderr prefixed with the command name — no tracebacks.
+Relative paths given to `--profile`, `--load` and `--out` are resolved against the
+target directory first, then your current directory, so `iacsim calibrate ./infra`
+followed by `iacsim run ./infra --profile calibrated.yaml` just works.
 
 ## Tail latency — `--walker monte_carlo`
 

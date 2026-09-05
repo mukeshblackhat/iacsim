@@ -58,7 +58,7 @@ Every command starts the same way:
 | 1 | `_bootstrap`, `load_config` | above | overrides: `latency.profiles` (`"defaults"` is always first, then each `-p`), `simulation.walker/samples/seed/load`, `format`, `parsers.cloudformation.region`, `report.outputs` |
 | 2 | **branch:** `simulation.walker == "load"` | `iacsim/cli.py:~97` | resolves `load.yaml` relative to the base dir; missing → `BadParameter` (exit 2). Other walkers skip this. |
 | 3 | `pipeline.run(target, cfg)` | `iacsim/core/pipeline.py:140` | the eight stages below |
-| 4 | `_write_outputs` | `iacsim/cli.py:55` | for each name in `report.outputs`: `text` → stdout (colour only on a TTY); anything else → `<base>/.iacsim/report.<ext>` |
+| 4 | `_write_reports` | `iacsim/cli.py:55` | for each name in `report.outputs`: `text` → stdout (colour only on a TTY); anything else → `<base>/.iacsim/report.<ext>` |
 
 **`pipeline.run` in order** (`iacsim/core/pipeline.py:140-149`):
 
