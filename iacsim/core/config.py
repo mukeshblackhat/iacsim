@@ -17,6 +17,7 @@ DEFAULTS: dict[str, Any] = {
     "provider": "aws",
     "parsers": {
         "cloudformation": {"region": None},   # None → first region literal in the template → us-east-1
+        "terraform": {"region": None, "workspace": None},   # --region fallback; terraform.workspace (default "default")
     },
     "inference": {
         "rules": [

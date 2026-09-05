@@ -152,3 +152,73 @@ def test_duplicate_resource_labels_warn_and_first_wins(tmp_path):
     raw = TerraformParser().parse(root)
     assert [r.attrs["name"] for r in raw.resources] == ["first"]
     assert any(w.startswith("duplicate resource aws_sqs_queue.q in") and w.endswith("first wins") for w in raw.warnings)
+
+
+# ---------------------------------------------------------------- WP5: real-world shapes
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _parse(name: str, **options):
+    return _by_address(TerraformParser(**options).parse(FIXTURES / name))
+
+
+def test_tf_json_is_read_like_hcl():
+    raws = _parse("tf-json")
+    fn = raws["aws_lambda_function.api"]
+    assert fn.attrs["function_name"] == "api-orders"
+    assert fn.attrs["environment"]["variables"]["TABLE"] == "${aws_dynamodb_table.orders.name}"
+    assert fn.attrs["environment"]["variables"]["GREETING"] == 'hello "world"'
+    assert "aws_dynamodb_table.orders" in fn.references
+    assert raws["aws_dynamodb_table.orders"].attrs["name"] == "orders-table"
+    assert TerraformParser.detect(FIXTURES / "tf-json")
+
+
+def test_tfvars_override_defaults_in_terraform_order():
+    web = _parse("tfvars")["aws_instance.web"]
+    assert web.attrs["instance_type"] == "large"          # a.auto.tfvars beats terraform.tfvars beats the default
+    assert web.attrs["tags"]["extra"] == "from-terraform-tfvars"
+    assert web.region == "eu-west-1"                       # z.auto.tfvars.json
+
+
+def test_terraform_workspace_defaults_and_can_be_set():
+    assert _parse("workspace")["aws_s3_bucket.b"].attrs["bucket"] == "logs-default-111"
+    assert _parse("workspace", workspace="prod")["aws_s3_bucket.b"].attrs["bucket"] == "logs-prod-999"
+
+
+def test_nested_dynamic_blocks_expand_with_iterator():
+    rules = _parse("nested-dynamic")["aws_lb_listener.l"].attrs["rule"]
+    assert [r["port"] for r in rules] == [80, 443]
+    assert [[p["value"] for p in r["path"]] for r in rules] == [["/a", "/b"], ["/c"]]
+
+
+def test_module_count_and_for_each_over_objects():
+    raws = _parse("module-count")
+    assert raws["module.worker[0].aws_sqs_queue.q"].attrs["name"] == "q-0"
+    assert raws["module.worker[1].aws_sqs_queue.q"].attrs["name"] == "q-1"
+    assert raws['aws_lambda_function.fn["beta"]'].attrs["memory_size"] == 512
+
+
+def test_registry_modules_are_followed_through_modules_json():
+    result = TerraformParser().parse(FIXTURES / "installed-modules")
+    raws = _by_address(result)
+    assert raws["module.vpc.aws_vpc.this"].attrs["tags"]["Name"] == "net"
+    remote = [w for w in result.warnings if "remote source" in w]
+    assert len(remote) == 1 and "module 'missing'" in remote[0] and "terraform init" in remote[0]
+
+
+def test_region_fallback_option_applies_when_provider_region_is_unresolved(tmp_path):
+    root = _project(tmp_path, {"main.tf": 'variable "r" {}\nprovider "aws" { region = var.r }\nresource "aws_s3_bucket" "b" { bucket = "x" }\n'})
+    without = TerraformParser().parse(root)
+    assert _by_address(without)["aws_s3_bucket.b"].region is None
+    assert any("pass --region" in w for w in without.warnings)
+    with_region = TerraformParser(region="ap-south-1").parse(root)
+    assert _by_address(with_region)["aws_s3_bucket.b"].region == "ap-south-1"
+    assert not any("pass --region" in w for w in with_region.warnings)
+
+
+def test_provisioner_and_connection_blocks_are_skipped(tmp_path):
+    root = _project(tmp_path, {"main.tf": 'provider "aws" { region = "us-east-1" }\nresource "aws_instance" "w" {\n  instance_type = "t3.micro"\n  connection { host = self.public_ip }\n  provisioner "remote-exec" { inline = ["echo hi"] }\n}\n'})
+    result = TerraformParser().parse(root)
+    assert result.warnings == []
+    assert "connection" not in _by_address(result)["aws_instance.w"].attrs

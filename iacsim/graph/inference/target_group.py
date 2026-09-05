@@ -5,6 +5,7 @@
     aws_lb_target_group_attachment.{target_group_arn, target_id} → instance
     aws_ecs_service.load_balancer.target_group_arn → service
     aws_autoscaling_group.target_group_arns / aws_autoscaling_attachment → ASG
+    aws_elb.instances (classic ELB) → instances directly
 
 emits lb → compute ROUTE edges. High confidence: this is the actual routing
 configuration.
@@ -55,6 +56,13 @@ class TargetGroupRule(InferenceRule):
                 targets_for_tg[tg].append((asg, att.address))
 
         edges = []
+        for elb in raws_of_type(raw, "aws_elb"):                 # classic ELB routes straight to instances
+            if elb.address not in graph.nodes:
+                continue
+            for target in addresses_in(elb.attrs.get("instances")):
+                if target in graph.nodes and graph.nodes[target].kind == NodeKind.COMPUTE:
+                    edges.append(Edge(src=elb.address, dst=target, kind=EdgeKind.ROUTE, confidence=Confidence.HIGH,
+                                      evidence=f"{short(elb.address)} instances lists {short(target)}"))
         for tg, lbs in lbs_for_tg.items():
             for lb, listener in lbs:
                 for target, via in targets_for_tg.get(tg, []):

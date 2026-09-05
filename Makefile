@@ -25,6 +25,9 @@ examples:                     ## smoke: every example still parses, runs, diffs
 	.venv/bin/iacsim run   examples/order-queue -o json
 	.venv/bin/iacsim run   examples/classic-web -o json
 	.venv/bin/iacsim diff  examples/classic-web examples/classic-web-bad -o json
+	.venv/bin/iacsim graph examples/real-world/ecs-alb --region us-east-1
+	.venv/bin/iacsim run   examples/real-world/two-tier -o json
+	.venv/bin/iacsim validate examples/real-world/serverless-apigw-lambda-dynamodb
 
 hooks:                        ## install the git pre-commit hook
 	printf '#!/bin/sh\nmake check\n' > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit

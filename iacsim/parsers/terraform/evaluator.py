@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from iacsim.core.refs import placeholder
@@ -104,7 +105,7 @@ class Scope:
     def lookup(self, name: str) -> Any:
         if name in self.bindings:
             return self.bindings[name]
-        if name in ("var", "local", "module", "path"):
+        if name in ("var", "local", "module", "path", "terraform"):
             return Namespace(name, self.module)
         if name == "data":
             where = self.module.address_prefix.rstrip(".") or "root module"
@@ -221,6 +222,8 @@ def get_attr(value: Any, name: str) -> Any:
         if name in value:
             return value[name]
         raise EvalError(f"object has no attribute '{name}'")
+    if isinstance(value, list):                       # after [*] / .*: map the attribute over the elements
+        return [get_attr(v, name) for v in value]
     if isinstance(value, Unresolved):
         return Unresolved(f"{value.text}.{name}")
     if value is None:
@@ -238,6 +241,10 @@ def _namespace_attr(ns: Namespace, name: str) -> Any:
         return m.child(name)
     if ns.kind == "path":
         return {"module": str(m.dir), "root": str(m.root_dir), "cwd": str(m.root_dir)}[name]
+    if ns.kind == "terraform":
+        if name == "workspace":                      # "default" unless parsers.terraform.workspace is set
+            return m.workspace
+        raise EvalError(f"terraform.{name} is not available")
     return m.resource(ns.kind, name)
 
 
@@ -366,11 +373,44 @@ def _call(name: str, arg_asts: list[AST], scope: Scope) -> Any:
             return False
     args = [evaluate(a, scope) for a in arg_asts]
     if name == "templatefile":
-        return TemplateFile(stringify(args[0]), args[1] if len(args) > 1 else {})
+        return TemplateFile(_module_path(scope, args[0]), args[1] if len(args) > 1 else {})
+    if name == "file":
+        return _read_file(scope, args[0])
+    if name == "fileexists":
+        return _file_path(scope, args[0]).is_file()
     fn = FUNCTIONS.get(name)
     if fn is None:
         raise EvalError(f"unknown function {name}()")
     return fn(*args)
+
+
+def _file_path(scope: Scope, raw: Any) -> Path:
+    """Terraform resolves file paths against the working directory (the root
+    module); `${path.module}/x` is already absolute by the time it gets here."""
+    text = stringify(raw)
+    path = Path(text)
+    if path.is_absolute():
+        return path
+    for base in (scope.module.dir, scope.module.root_dir):
+        if (base / path).exists():
+            return base / path
+    return scope.module.root_dir / path
+
+
+def _module_path(scope: Scope, raw: Any) -> str:
+    return str(_file_path(scope, raw))
+
+
+def _read_file(scope: Scope, raw: Any) -> Any:
+    path = _file_path(scope, raw)
+    try:
+        return path.read_text()
+    except OSError:
+        return Unresolved(f"file({stringify(raw)})")
+
+
+def _zipmap(keys: Any, values: Any) -> dict:
+    return dict(zip([stringify(k) for k in _to_list(keys)], _to_list(values), strict=False))
 
 
 def _merge(*maps: Any) -> dict:
@@ -467,8 +507,24 @@ FUNCTIONS: dict[str, Callable[..., Any]] = {
     "distinct": lambda lst: list(dict.fromkeys(_to_list(lst))),
     "sort": lambda lst: sorted(_to_list(lst), key=stringify),
     "reverse": lambda lst: list(reversed(_to_list(lst))),
-    "file": _unresolved_fn("file"),
+    "zipmap": _zipmap,
+    "trimprefix": lambda s, p: stringify(s).removeprefix(stringify(p)),
+    "trimsuffix": lambda s, x: stringify(s)[:-len(stringify(x))] if stringify(x) and stringify(s).endswith(stringify(x)) else stringify(s),
+    "trim": lambda s, chars: stringify(s).strip(stringify(chars)),
+    "startswith": lambda s, p: stringify(s).startswith(stringify(p)),
+    "endswith": lambda s, x: stringify(s).endswith(stringify(x)),
+    "substr": lambda s, offset, length: stringify(s)[int(offset):] if int(length) < 0 else stringify(s)[int(offset):int(offset) + int(length)],
+    "strrev": lambda s: stringify(s)[::-1],
+    "chomp": lambda s: stringify(s).rstrip("\r\n"),
+    "one": lambda lst: (_to_list(lst) or [None])[0],
+    "try_element": lambda lst, i: _to_list(lst)[int(i)] if int(i) < len(_to_list(lst)) else None,
+    "slice": lambda lst, a, b: _to_list(lst)[int(a):int(b)],
+    "setproduct": lambda *lists: [list(t) for t in __import__("itertools").product(*[_to_list(x) for x in lists])],
     "filebase64": _unresolved_fn("filebase64"),
+    "filemd5": _unresolved_fn("filemd5"),
+    "filesha256": _unresolved_fn("filesha256"),
+    "fileset": _unresolved_fn("fileset"),
+    "templatestring": _unresolved_fn("templatestring"),
     "cidrsubnet": _unresolved_fn("cidrsubnet"),
     "cidrhost": _unresolved_fn("cidrhost"),
     "uuid": _unresolved_fn("uuid"),

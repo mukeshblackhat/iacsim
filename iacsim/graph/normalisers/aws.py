@@ -57,6 +57,7 @@ TYPE_MAP: dict[str, tuple[NodeKind, str]] = {
     "AWS::S3::Bucket":                (NodeKind.DATASTORE, "s3"),
     # traffic
     "aws_lb":                         (NodeKind.LB, "alb"),
+    "aws_elb":                        (NodeKind.LB, "alb"),      # classic ELB — priced like an ALB
     "aws_alb":                        (NodeKind.LB, "alb"),
     "AWS::ElasticLoadBalancingV2::LoadBalancer": (NodeKind.LB, "alb"),
     "aws_api_gateway_rest_api":       (NodeKind.GATEWAY, "api_gateway"),
@@ -84,6 +85,12 @@ TYPE_MAP: dict[str, tuple[NodeKind, str]] = {
 
 # Glue with no latency meaning; dropped silently (inference rules read them from raw).
 IGNORED_PREFIXES = (
+    "random_", "null_resource", "terraform_data", "time_sleep", "time_static", "local_file",
+    "archive_file", "tls_", "aws_key_pair", "aws_s3_object", "aws_ssm_parameter", "aws_secretsmanager_",
+    "aws_kms_", "aws_eip", "aws_route_table", "aws_default_", "aws_acm_", "aws_wafv2_",
+    "aws_vpc_security_group_", "aws_ebs_volume", "aws_volume_attachment", "aws_guardduty_",
+    "aws_lambda_layer_version", "aws_lambda_function_url", "aws_lambda_alias", "aws_backup_",
+    "aws_cloudtrail", "aws_config_", "aws_sns_topic_subscription", "aws_ses_", "aws_athena_",
     "aws_iam_", "AWS::IAM::",
     "aws_security_group", "AWS::EC2::SecurityGroup",
     "aws_lb_target_group", "aws_lb_listener", "aws_alb_target_group", "aws_alb_listener",

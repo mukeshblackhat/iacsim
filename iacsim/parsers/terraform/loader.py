@@ -11,6 +11,13 @@ One ModuleInstance per module *instance* — a `module "x"` block with
     resources   [(type, name, body)]          expanded lazily, memoised
     regions     "aws" / "aws.<alias>" → region string   (provider blocks + `providers` map)
 
+Root-only inputs: `terraform.tfvars` / `*.auto.tfvars` (+ `.json`) override
+variable defaults; `workspace` backs `terraform.workspace` (default "default");
+`default_region` is the `--region` fallback when no provider region resolves.
+`*.tf.json` and `.tofu` files load like `.tf`. Registry/git module sources
+are followed through `.terraform/modules/modules.json` when `terraform init`
+has run; otherwise they warn and are skipped.
+
 Everything is lazy so that cross-module references (compute needs the
 database address, the database needs compute's security group) resolve
 without ordering — a reference is just a Ref, it never forces the target to
@@ -20,6 +27,7 @@ itself) are caught and reported as a warning.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -43,8 +51,14 @@ from iacsim.parsers.terraform.evaluator import (
     unquote_key,
 )
 from iacsim.parsers.terraform.hcl_expr import ParseError
+from iacsim.parsers.terraform.tfjson import load_tf_json, load_tfvars_json
 
-_META_KEYS = ("for_each", "count", "provider", "providers", "dynamic", "lifecycle", "source", "__is_block__", "__comments__")
+_META_KEYS = ("for_each", "count", "provider", "providers", "dynamic", "lifecycle", "source",
+              "connection", "provisioner", "timeouts", "__is_block__", "__comments__")
+_SOURCE_GLOBS = ("*.tf", "*.tofu", "*.tf.json")
+_TFVARS_GLOBS = ("terraform.tfvars", "terraform.tfvars.json", "*.auto.tfvars", "*.auto.tfvars.json")
+REMOTE_MODULE_HINT = ("resources inside it are not seen; run `terraform init` so iacsim can follow "
+                      ".terraform/modules/modules.json")
 _PROVIDER_REF = re.compile(r"^\$\{(\w+)\.(\w+)\}$")
 
 
@@ -72,6 +86,9 @@ class ModuleInstance:
         input_exprs: dict[str, Any] | None = None,
         parent_scope: Scope | None = None,
         provider_map: dict[str, str] | None = None,
+        workspace: str | None = None,
+        default_region: str | None = None,
+        module_key: str = "",
     ) -> None:
         self.dir = dir
         self.root_dir = root_dir
@@ -81,6 +98,11 @@ class ModuleInstance:
         self.input_exprs = input_exprs or {}
         self.parent_scope = parent_scope
         self.scope = Scope(self)
+        self.workspace = workspace or (parent.workspace if parent else "default")
+        self.default_region = default_region or (parent.default_region if parent else None)
+        self.module_key = module_key                   # "vpc" / "vpc.subnets" — the key modules.json uses
+        self.installed_modules = parent.installed_modules if parent else _installed_modules(root_dir)
+        self.var_values: dict[str, Any] = {} if parent else _load_tfvars(dir, warnings)
 
         self.variables: dict[str, Any] = {}
         self.locals: dict[str, Any] = {}
@@ -102,10 +124,10 @@ class ModuleInstance:
     # ------------------------------------------------------------ loading
 
     def _load_files(self) -> None:
-        for file in sorted(self.dir.glob("*.tf")):
+        files = sorted(f for pattern in _SOURCE_GLOBS for f in self.dir.glob(pattern))
+        for file in files:
             try:
-                with open(file) as fh:
-                    doc = hcl2.load(fh)
+                doc = _load_document(file)
             except Exception as e:  # noqa: BLE001 — hcl2 surfaces lark errors of many types
                 self.warnings.add(f"{file}: could not parse ({str(e).splitlines()[0]})")
                 continue
@@ -146,9 +168,16 @@ class ModuleInstance:
             try:
                 region = evaluate_raw(block.get("region"), self.scope)
             except (EvalError, ParseError) as e:
-                self.warnings.add(f"{self.address_prefix or 'root'} provider {key}: region not resolved ({e})")
-                region = None
-            regions[key] = region if isinstance(region, str) else None
+                region = Unresolved(str(e))
+            if not isinstance(region, str):
+                region = self.default_region
+                if region is None:
+                    self.warnings.add(
+                        f"{self.address_prefix or 'root'} provider {key}: region not resolved; "
+                        "pass --region (parsers.terraform.region) to set a fallback")
+            regions[key] = region
+        if not regions.get("aws") and not self.parent and self.default_region:
+            regions["aws"] = self.default_region
         return regions
 
     # ------------------------------------------------------------ lazy lookups
@@ -158,6 +187,8 @@ class ModuleInstance:
             return self._inputs[name]
         if name in self.input_exprs and self.parent_scope is not None:
             value = evaluate_raw(self.input_exprs[name], self.parent_scope)
+        elif name in self.var_values:
+            value = evaluate_raw(self.var_values[name], self.scope)
         elif name in self.variables and self.variables[name] is not None:
             value = evaluate_raw(self.variables[name], self.scope)
         elif name in self.variables:
@@ -213,10 +244,14 @@ class ModuleInstance:
 
     def _build_child(self, name: str, body: dict) -> ModuleRef | ModuleGroup:
         source = _literal(body.get("source")) or ""
-        if not source.startswith((".", "/")):
-            self.warnings.add(f"module '{name}': remote source '{source}' is not supported; skipped")
+        child_key = f"{self.module_key}.{name}" if self.module_key else name
+        if source.startswith((".", "/")):
+            child_dir = (self.dir / source).resolve()
+        elif child_key in self.installed_modules:
+            child_dir = self.installed_modules[child_key]
+        else:
+            self.warnings.add(f"module '{name}': remote source '{source}'; {REMOTE_MODULE_HINT}")
             return ModuleGroup({})
-        child_dir = (self.dir / source).resolve()
         if not child_dir.is_dir():
             self.warnings.add(f"module '{name}': source directory {child_dir} not found; skipped")
             return ModuleGroup({})
@@ -226,7 +261,7 @@ class ModuleInstance:
 
         def make(prefix: str, bindings: dict[str, Any]) -> ModuleRef:
             inst = ModuleInstance(child_dir, self.root_dir, self.warnings, prefix, self, inputs,
-                                  self.scope.child(bindings), provider_map)
+                                  self.scope.child(bindings), provider_map, module_key=child_key)
             return ModuleRef(inst)
 
         if "for_each" in body:
@@ -313,21 +348,65 @@ class ModuleInstance:
         )
 
     def _dynamic_blocks(self, address: str, blocks: list, scope: Scope) -> dict[str, list]:
+        """Expand `dynamic "label" { for_each = … content { … } }` blocks, recursively:
+        a `content` may itself contain `dynamic` blocks (the iterator variable is the label)."""
         out: dict[str, list] = {}
         for block in blocks:
             for label, body in _labelled(block):
                 try:
                     pairs = iterate(evaluate_raw(body.get("for_each"), scope))
                     content = (body.get("content") or [{}])[0]
+                    iterator = _literal(body.get("iterator")) or label
                     for key, value in pairs:
-                        inner = scope.child({label: {"key": key, "value": value}})
-                        out.setdefault(label, []).append(to_plain(evaluate_raw(content, inner)))
+                        inner = scope.child({iterator: {"key": key, "value": value}})
+                        plain = {k: to_plain(evaluate_raw(v, inner)) for k, v in content.items()
+                                 if k not in ("dynamic", "__is_block__", "__comments__")}
+                        for sub_label, items in self._dynamic_blocks(address, content.get("dynamic", []), inner).items():
+                            plain.setdefault(sub_label, []).extend(items)
+                        out.setdefault(label, []).append(plain)
                 except (EvalError, ParseError, TypeError, ValueError, KeyError) as e:
                     self.warnings.add(f"{address}: dynamic '{label}' block skipped ({e})")
         return out
 
 
 # ------------------------------------------------------------------ helpers
+
+def _load_document(file: Path) -> dict:
+    if file.name.endswith(".json"):
+        return load_tf_json(file)
+    with open(file) as fh:
+        return hcl2.load(fh)
+
+
+def _load_tfvars(root: Path, warnings: Warnings) -> dict[str, Any]:
+    """terraform.tfvars then *.auto.tfvars (lexical order), later files win — Terraform's own order."""
+    values: dict[str, Any] = {}
+    files = [f for pattern in _TFVARS_GLOBS for f in sorted(root.glob(pattern))]
+    for file in files:
+        try:
+            if file.name.endswith(".json"):
+                doc = load_tfvars_json(file)
+            else:
+                with open(file) as fh:
+                    doc = hcl2.load(fh)
+        except Exception as e:  # noqa: BLE001
+            warnings.add(f"{file}: could not parse ({str(e).splitlines()[0]})")
+            continue
+        values.update({k: v for k, v in doc.items() if k not in ("__is_block__", "__comments__")})
+    return values
+
+
+def _installed_modules(root: Path) -> dict[str, Path]:
+    """`.terraform/modules/modules.json` (written by `terraform init`): module key → local dir."""
+    manifest = root / ".terraform" / "modules" / "modules.json"
+    if not manifest.is_file():
+        return {}
+    try:
+        entries = json.loads(manifest.read_text()).get("Modules", [])
+    except (OSError, ValueError):
+        return {}
+    return {m["Key"]: (root / m["Dir"]).resolve() for m in entries if m.get("Key") and m.get("Dir")}
+
 
 def _labelled(block: dict) -> list[tuple[str, Any]]:
     """{'"name"': {...}} → [("name", {...})], skipping python-hcl2 metadata keys."""

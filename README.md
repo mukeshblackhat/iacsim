@@ -23,6 +23,28 @@ iacsim validate ./infra --strict                             # exit 1 on any par
 iacsim --version
 ```
 
+## Real-world Terraform
+
+iacsim is tested against unmodified public Terraform projects vendored under
+`examples/real-world/` (each with an `ATTRIBUTION.md`): an AWS serverless pattern, an
+EventBridge-Pipes-to-Step-Functions pattern, the provider's `ecs-alb` and `two-tier`
+examples, and an EKS cluster built from registry modules. `tests/test_real_world.py` asserts
+that every one of them parses, builds a graph and runs, and that every warning is a *named*
+one. See `examples/real-world/README.md` for the larger manual-run corpus.
+
+What the Terraform parser reads:
+
+- `.tf`, `.tofu` and `.tf.json` files; `terraform.tfvars`, `*.auto.tfvars` (+ `.json`) — values win over defaults
+- local modules, `count` / `for_each` on resources and modules, nested `dynamic` blocks, `[*]` splats
+- `terraform.workspace` (`--workspace NAME`, default `default`)
+- `file()`, `fileexists()`, `templatefile()` relative to the module, then the root
+- registry / git modules **after `terraform init`** — iacsim follows `.terraform/modules/modules.json`
+  to the downloaded copies; without it, one warning per module
+
+What stays a warning (never a crash): `data.*` sources, `terraform_remote_state`, provider-computed
+functions (`cidrsubnet`, `filemd5`, …), a provider region that does not resolve (pass `--region`
+as the fallback), resource types iacsim does not model yet (kept as network nodes so nothing vanishes).
+
 ## Exit codes and paths
 
 | code | meaning |
