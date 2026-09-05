@@ -45,7 +45,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from iacsim.core.models import RawResource
+from iacsim.core.models import PHYSICAL_NAME_ATTRS, RawResource
 from iacsim.core.refs import placeholder
 
 CANONICAL_TYPES: dict[str, str] = {
@@ -115,8 +115,8 @@ ALIASES: dict[str, dict[str, str]] = {
     "aws_api_gateway_rest_api": {},
 }
 
-# Attributes that hold a resource's physical name (used by resolve_physical_names and labels).
-NAME_ATTRS = ("function_name", "name", "bucket", "identifier")
+# Attributes that hold a resource's physical name — the normaliser's label order (core/models.py).
+NAME_ATTRS = PHYSICAL_NAME_ATTRS
 # Resource types whose literal name in an env var counts as a reference.
 NAMED_TARGET_TYPES = ("aws_dynamodb_table", "aws_s3_bucket", "aws_sqs_queue", "aws_sns_topic",
                       "aws_kinesis_stream", "aws_db_instance", "aws_rds_cluster", "aws_elasticache_cluster")

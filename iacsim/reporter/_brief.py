@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from iacsim.core.models import Finding, Findings, HopResult, InfraGraph
+from iacsim.core.models import Finding, Findings, HopResult, InfraGraph, LoadSummary
 
 BAR_WIDTH = 24
 EVIDENCE_WIDTH = 70
@@ -64,7 +64,7 @@ class BriefBuilder:
         sections = [
             self._where(groups.get("per_category", []), f),
             self._bottlenecks(groups.get("per_node", [])),
-            self._recommendations(groups.get("per_hop", []), groups.get("recommendations", [])),
+            self._recommendations(groups.get("recommendations", [])),
             self._hops(f.hops),
             self._critical_path(groups.get("critical_path", [])),
             self._tail_risk(groups.get("tail_risk", [])),
@@ -75,7 +75,7 @@ class BriefBuilder:
             subtitle=f.description,
             meta=[("source", f.source), ("total", f"{f.total_ms:,.1f} ms"),
                   ("tail", self._percentiles(f)), ("samples", f"{f.samples:,}" if f.samples else ""),
-                  ("profile", " → ".join(f.profile_sources)), ("shape", self._shape(f.shape)),
+                  ("profile", " → ".join(f.profile_sources)), ("shape", shape_text(f.shape)),
                   ("load", self._load_line(f.load))],
             sections=[s for s in sections if s.rows],
         )
@@ -84,12 +84,12 @@ class BriefBuilder:
 
     def build_capacity(self, findings: list[Findings]) -> Brief | None:
         """The users-sweep brief, from the first scenario that carries a load sweep."""
-        first = next((f for f in findings if f.load and f.load.get("resources")), None)
+        first = next((f for f in findings if f.load and f.load.resources), None)
         if first is None:
             return None
         load = first.load
-        users = list(load["users"])
-        threshold = float(load.get("thresholds", {}).get("utilisation", 0.8))
+        users = list(load.users)
+        threshold = float(load.thresholds.get("utilisation", 0.8))
         sections = [self._utilisation(load, users, threshold), self._p99_sweep(findings, users),
                     self._saturation(first.by_analyzer().get("saturation", []), users)]
         return Brief(
@@ -97,23 +97,23 @@ class BriefBuilder:
             subtitle="analytic M/M/c per resource; utilisation is linear in users, so the break point is exact",
             meta=[("users", ", ".join(f"{u:,}" for u in users)),
                   ("thresholds",
-                   f"p99 {load.get('thresholds', {}).get('p99_ms', 0):,.0f} ms · utilisation {threshold:.0%}"),
+                   f"p99 {load.thresholds.get('p99_ms', 0):,.0f} ms · utilisation {threshold:.0%}"),
                   ("tail factor",
-                   f"{load.get('tail_factor', 1.3):g} × no-contention expected (simulation.tail_factor)"),
-                  ("assumes", "; ".join(load.get("assumptions", [])))],
+                   f"{load.tail_factor:g} × no-contention expected (simulation.tail_factor)"),
+                  ("assumes", "; ".join(load.assumptions))],
             sections=[s for s in sections if s.rows],
         )
 
-    def _utilisation(self, load: dict, users: list[int], threshold: float) -> Section:
+    def _utilisation(self, load: LoadSummary, users: list[int], threshold: float) -> Section:
         s = Section("Utilisation by users", ["resource", *[f"{u:,}" for u in users], "capacity"],
                     intro="▲ past the utilisation threshold · SAT = saturated (queue grows without bound)")
-        resources = load["resources"]
-        last = load["utilisation"][users[-1]]
+        resources = load.resources
+        last = load.utilisation[users[-1]]
         for key, _ in sorted(last.items(), key=lambda kv: -(kv[1] if kv[1] is not None else float("inf")))[:8]:
             r = resources[key]
             cells = [r["label"]]
             for u in users:
-                rho = load["utilisation"][u].get(key, 0.0)
+                rho = load.utilisation[u].get(key, 0.0)
                 if rho is None:                          # no servers at all
                     cells.append("SAT")
                     continue
@@ -126,8 +126,8 @@ class BriefBuilder:
     def _p99_sweep(findings: list[Findings], users: list[int]) -> Section:
         s = Section("p99 by users", ["scenario", *[f"{u:,}" for u in users]])
         for f in findings:
-            lat = f.load.get("latency") if f.load else None
-            if not lat or not f.load.get("traffic", True):
+            lat = f.load.latency if f.load else None
+            if not lat or not f.load.traffic:
                 continue
             cells = [f.scenario]
             for u in users:
@@ -149,9 +149,9 @@ class BriefBuilder:
         return s
 
     @staticmethod
-    def _load_line(load: dict) -> str:
-        lat = load.get("latency") if load else None
-        if not lat or not load.get("traffic", True):
+    def _load_line(load: LoadSummary | None) -> str:
+        lat = load.latency if load else None
+        if not lat or not load.traffic:
             return ""
         parts = []
         for u, row in lat.items():
@@ -180,7 +180,7 @@ class BriefBuilder:
             s.rows.append(Row([str(i), self.name(n.subject), f"{n.latency_ms:,.1f}", f"{n.share:.0%}", n.detail]))
         return s
 
-    def _recommendations(self, _hops: list[Finding], recs: list[Finding]) -> Section:
+    def _recommendations(self, recs: list[Finding]) -> Section:
         s = Section("Recommendations", ["#", "suggestion", "saves ~ms", "of total", "reasoning"])
         for i, r in enumerate(recs, 1):
             why, _, based_on = r.detail.partition(". Based on: ")
@@ -241,19 +241,25 @@ class BriefBuilder:
             return f"{self.name(a)} → {self.name(b)}"
         return self.graph.display_name(node_id)
 
-    @staticmethod
-    def _shape(shape: dict[str, float]) -> str:
-        if not shape:
-            return ""
-        parts = [f"{int(shape.get('hop_count', 0))} hops"]
-        if shape.get("parallel_groups"):
+
+
+def shape_text(shape: dict[str, float], style: str = "brief") -> str:
+    """The A3 shape line. `brief` is the full form for a scenario header;
+    `diff` is the short form the diff tables use (no fan-out, "—" when empty)."""
+    if not shape:
+        return "" if style == "brief" else "—"
+    parts = [f"{int(shape.get('hop_count', 0))} hops"]
+    if shape.get("parallel_groups"):
+        if style == "brief":
             parts.append(f"{int(shape['parallel_groups'])} parallel group(s) "
                          f"saving {shape['parallel_savings_ms']:,.1f} ms")
-        if shape.get("fanout_copies"):
-            parts.append(f"fan-out ×{int(shape['fanout_copies'])} costed once")
-        if shape.get("wait_ms"):
-            parts.append(f"{shape['wait_ms']:,.0f} ms of waits")
-        return "; ".join(parts)
+        else:
+            parts.append(f"parallel saves {shape.get('parallel_savings_ms', 0):,.0f} ms")
+    if style == "brief" and shape.get("fanout_copies"):
+        parts.append(f"fan-out ×{int(shape['fanout_copies'])} costed once")
+    if shape.get("wait_ms"):
+        parts.append(f"{shape['wait_ms']:,.0f} ms" + (" of waits" if style == "brief" else " waits"))
+    return "; ".join(parts) if style == "brief" else ", ".join(parts)
 
 
 def bar(share: float, width: int = BAR_WIDTH) -> str:

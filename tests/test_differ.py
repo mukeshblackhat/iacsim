@@ -14,7 +14,7 @@ from iacsim.core.models import (
     NodeKind,
     Placement,
 )
-from iacsim.differ import diff_graphs, diff_hops, diff_reports, diff_scenario, parse_threshold
+from iacsim.diff.differ import diff_graphs, diff_hops, diff_reports, diff_scenario, parse_threshold
 
 
 def hop(src, dst, ms, **breakdown):
@@ -88,9 +88,10 @@ def test_category_delta_arithmetic():
     a = findings("s", [hop("a", "b", 100)], [cat("distance", 92, 0.92), cat("processing", 8, 0.08, "A2")])
     sd = diff_scenario(b, a)
     by = {c.subject: c for c in sd.categories}
-    assert by["distance"].delta_ms == 90 and by["distance"].before_share == 0.2 and by["distance"].after_share == 0.92
+    assert by["distance"].delta_ms == pytest.approx(90)
+    assert by["distance"].before_share == pytest.approx(0.2) and by["distance"].after_share == pytest.approx(0.92)
     assert by["processing"].status == "unchanged" and by["processing"].delta_ms == 0
-    assert sd.delta_ms == 90 and sd.delta_pct == 9.0
+    assert sd.delta_ms == pytest.approx(90) and sd.delta_pct == pytest.approx(9.0)
 
 
 def test_non_additive_categories_are_left_out_of_the_shift():

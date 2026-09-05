@@ -31,10 +31,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from iacsim.core.interfaces import SCENARIO_SOURCES, ScenarioSource
-from iacsim.core.models import InfraGraph, NodeKind, Scenario, Step
+from iacsim.core.models import InfraGraph, NodeKind, Scenario, Step, WorkflowStep
 
 MAX_DEPTH = 8
 MAX_PER_ENTRY = 5
@@ -101,43 +100,42 @@ class InferredScenarioSource(ScenarioSource):
         new = _Path(nodes=path.nodes + [node_id], steps=path.steps + [Step(node=node_id)],
                     notes=list(path.notes), via_orchestrator=path.via_orchestrator)
         if node.kind == NodeKind.ORCHESTRATOR and node.attrs.get("workflow"):
-            new.steps += self._replay(node.attrs["workflow"], new.notes)
+            new.steps += self._replay(WorkflowStep.from_dicts(node.attrs["workflow"]), new.notes)
             new.via_orchestrator = True
         return new
 
     # ------------------------------------------------------------------ workflow replay
 
-    def _replay(self, items: list[dict[str, Any]], notes: list[str]) -> list[Step]:
+    def _replay(self, items: list[WorkflowStep], notes: list[str]) -> list[Step]:
         steps: list[Step] = []
         for item in items:
-            kind = item.get("type")
-            if kind == "Task" and item.get("target") in self.graph.nodes:
-                steps.append(Step(node=item["target"]))
-            elif kind == "Map":
-                body = self._replay(item.get("body", []), notes)
+            if item.type == "Task" and item.target in self.graph.nodes:
+                steps.append(Step(node=item.target))
+            elif item.type == "Map":
+                body = self._replay(item.body, notes)
                 if body:
-                    n = item.get("concurrency") or 1
-                    notes.append(f"Map {item['state']}: ×{n} concurrent items, one item costed")
-                    steps.append(Step(parallel=[body], note=f"Map {item['state']} ×{n}"))
-            elif kind == "Parallel":
-                branches = [self._replay(b, notes) for b in item.get("branches", [])]
+                    n = item.concurrency or 1
+                    notes.append(f"Map {item.state}: ×{n} concurrent items, one item costed")
+                    steps.append(Step(parallel=[body], note=f"Map {item.state} ×{n}"))
+            elif item.type == "Parallel":
+                branches = [self._replay(b, notes) for b in item.branches]
                 branches = [b for b in branches if b]
                 if branches:
                     steps.append(Step(parallel=branches))
-            elif kind == "Choice":
+            elif item.type == "Choice":
                 steps += self._choose_branch(item, notes)
-            elif kind == "Wait" and item.get("seconds"):
-                steps.append(Step(wait_ms=float(item["seconds"]) * 1000, note=f"Wait {item['state']}"))
+            elif item.type == "Wait" and item.seconds:
+                steps.append(Step(wait_ms=float(item.seconds) * 1000, note=f"Wait {item.state}"))
         return steps
 
-    def _choose_branch(self, choice: dict[str, Any], notes: list[str]) -> list[Step]:
-        branches = choice.get("branches", {})
+    def _choose_branch(self, choice: WorkflowStep, notes: list[str]) -> list[Step]:
+        branches = choice.choices
         if not branches:
             return []
         best = max(branches, key=lambda name: _task_count(branches[name]))
         if _task_count(branches[best]) == 0:
             return []                                   # only waits / nothing: take the no-delay path
-        notes.append(f"Choice {choice['state']}: took branch {best} ({_task_count(branches[best])} tasks)")
+        notes.append(f"Choice {choice.state}: took branch {best} ({_task_count(branches[best])} tasks)")
         return self._replay(branches[best], notes)
 
     # ------------------------------------------------------------------ selection
@@ -167,17 +165,16 @@ class InferredScenarioSource(ScenarioSource):
         return self.graph.display_name(node_id)
 
 
-def _task_count(items: list[dict[str, Any]]) -> int:
+def _task_count(items: list[WorkflowStep]) -> int:
     """Number of Task states in a workflow fragment, recursing into Map / Parallel / Choice."""
     n = 0
     for item in items:
-        kind = item.get("type")
-        if kind == "Task":
+        if item.type == "Task":
             n += 1
-        elif kind == "Map":
-            n += _task_count(item.get("body", []))
-        elif kind == "Parallel":
-            n += sum(_task_count(b) for b in item.get("branches", []))
-        elif kind == "Choice":
-            n += max((_task_count(b) for b in item.get("branches", {}).values()), default=0)
+        elif item.type == "Map":
+            n += _task_count(item.body)
+        elif item.type == "Parallel":
+            n += sum(_task_count(b) for b in item.branches)
+        elif item.type == "Choice":
+            n += max((_task_count(b) for b in item.choices.values()), default=0)
     return n

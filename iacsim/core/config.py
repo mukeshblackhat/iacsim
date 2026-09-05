@@ -13,6 +13,8 @@ from typing import Any
 
 import yaml
 
+from iacsim.core.util import deep_merge
+
 DEFAULTS: dict[str, Any] = {
     "provider": "aws",
     "parsers": {
@@ -33,7 +35,6 @@ DEFAULTS: dict[str, Any] = {
     },
     "scenarios": {
         "sources": ["yaml_file", "inferred_from_entrypoints"],
-        "file": "scenarios.yaml",
     },
     "latency": {
         "profiles": ["defaults"],
@@ -99,19 +100,12 @@ def load_config(target_dir: Path, overrides: dict[str, Any] | None = None) -> Co
     candidate = target_dir / CONFIG_FILENAME
     if candidate.is_file():
         user = yaml.safe_load(candidate.read_text()) or {}
-        cfg.data = _deep_merge(cfg.data, user)
+        cfg.data = deep_merge(cfg.data, user)
         cfg.path = candidate
     for key, value in (overrides or {}).items():
         if value is not None:
             cfg.set(key, value)
     return cfg
-
-
-def _deep_merge(base: dict, override: dict) -> dict:
-    out = dict(base)
-    for k, v in override.items():
-        out[k] = _deep_merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
-    return out
 
 
 def _deep_copy(d: dict) -> dict:

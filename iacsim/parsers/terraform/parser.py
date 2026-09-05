@@ -53,5 +53,5 @@ class TerraformParser(Parser):
                               workspace=self.options.get("workspace"),
                               default_region=self.options.get("region"))
         resources = root.all_resources()
-        return RawResources(resources=resources, format="terraform", root_path=str(root_dir),
+        return RawResources(resources=resources, format="terraform",
                             warnings=warnings.items)

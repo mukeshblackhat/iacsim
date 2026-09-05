@@ -25,8 +25,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 from iacsim import __version__
-from iacsim.core.interfaces import PROFILE_SOURCES, MetricSource
+from iacsim.core.interfaces import MetricSource
 from iacsim.core.models import InfraGraph, Node
+from iacsim.latency.profile import load_defaults_document
 
 # Profile subtypes in defaults.yaml order — the writer keeps this order too.
 SUBTYPE_ORDER = ("lambda", "ec2", "fargate", "dynamodb", "rds", "elasticache", "s3", "alb",
@@ -49,7 +50,7 @@ class CalibrationResult:
 
 
 def calibrate(graph: InfraGraph, source: MetricSource, window: str, *, fmt: str) -> CalibrationResult:
-    defaults = PROFILE_SOURCES.get("defaults")().load("defaults")["processing"]
+    defaults = load_defaults_document()["processing"]
     result = CalibrationResult(profile={"meta": {}, "processing": {}})
     label_counts = Counter(n.label for n in graph.nodes.values() if n.label)
 

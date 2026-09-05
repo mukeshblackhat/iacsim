@@ -4,18 +4,16 @@ markdown for PR comments and docs."""
 from __future__ import annotations
 
 from iacsim.core.interfaces import REPORTERS, Reporter
-from iacsim.core.models import DiffReport, Findings, InfraGraph
+from iacsim.core.models import Findings, InfraGraph
+from iacsim.diff.models import DiffReport
 from iacsim.reporter._brief import Brief, BriefBuilder, Section
 from iacsim.reporter._diff_brief import DiffBriefBuilder
 
 
 @REPORTERS.register("markdown")
 class MarkdownReporter(Reporter):
-    def __init__(self, top_n: int = 10, all_hops: bool = False, **_ignored) -> None:
-        self.top_n, self.all_hops = top_n, all_hops
-
     def render(self, findings: list[Findings], graph: InfraGraph) -> str:
-        builder = BriefBuilder(graph, top_n=self.top_n, all_hops=self.all_hops)
+        builder = BriefBuilder(graph, top_n=self.options.top_n, all_hops=self.options.all_hops)
         parts = []
         capacity = builder.build_capacity(findings)
         if capacity is not None:

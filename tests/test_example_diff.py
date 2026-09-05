@@ -4,12 +4,12 @@ explain itself as 'the database moved', foosh vs itself must be silent."""
 import json
 
 import pytest
-from conftest import EXAMPLES
+from conftest import example_copy
 from typer.testing import CliRunner
 
 from iacsim.cli import app
 from iacsim.core.interfaces import REPORTERS
-from iacsim.differ import diff_reports
+from iacsim.diff.differ import diff_reports
 
 CROSS_REGION_DELTA = 298.8
 
@@ -72,24 +72,31 @@ def test_every_reporter_renders_the_diff(classic_diff, classic_web_run, classic_
 
 
 # ------------------------------------------------------------------ CLI exit codes
+# The CLI writes diff.* next to the *after* target, so these run on throwaway copies.
 
-def test_cli_fail_on_regression_exits_2():
-    result = CliRunner().invoke(app, ["diff", str(EXAMPLES / "classic-web"), str(EXAMPLES / "classic-web-bad"),
+@pytest.fixture(scope="module")
+def copies(tmp_path_factory):
+    root = tmp_path_factory.mktemp("diff-cli")
+    return {name: example_copy(name, root) for name in ("classic-web", "classic-web-bad", "foosh-serverless")}
+
+
+def test_cli_fail_on_regression_exits_2(copies):
+    result = CliRunner().invoke(app, ["diff", str(copies["classic-web"]), str(copies["classic-web-bad"]),
                                       "--fail-on-regression", "50ms", "-o", "json"])
     assert result.exit_code == 2, result.output
     assert "REGRESSION" in result.output
 
 
-def test_cli_no_change_exits_0():
-    result = CliRunner().invoke(app, ["diff", str(EXAMPLES / "foosh-serverless"), str(EXAMPLES / "foosh-serverless"),
+def test_cli_no_change_exits_0(copies):
+    result = CliRunner().invoke(app, ["diff", str(copies["foosh-serverless"]), str(copies["foosh-serverless"]),
                                       "--fail-on-regression", "1ms", "-o", "json"])
     assert result.exit_code == 0, result.output
     assert "no latency change" in result.output
 
 
-def test_cli_scenario_filter():
-    result = CliRunner().invoke(app, ["diff", str(EXAMPLES / "classic-web"), str(EXAMPLES / "classic-web-bad"),
+def test_cli_scenario_filter(copies):
+    result = CliRunner().invoke(app, ["diff", str(copies["classic-web"]), str(copies["classic-web-bad"]),
                                       "--scenario", "page_load", "-o", "markdown"])
     assert result.exit_code == 0, result.output
-    md = (EXAMPLES / "classic-web-bad" / ".iacsim" / "diff.md").read_text()
+    md = (copies["classic-web-bad"] / ".iacsim" / "diff.md").read_text()
     assert md.count("# ") >= 2 and "load_balancer.lb/database" not in md

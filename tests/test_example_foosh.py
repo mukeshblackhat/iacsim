@@ -192,20 +192,20 @@ def test_load_sweep_breaks_on_a_lambda_first(foosh_load):
     from conftest import result
     r = result(foosh_load, "start_workflow")
     load = r.load
-    assert load["users"] == [100, 500, 1000, 2000, 5000, 10000]
+    assert load.users == [100, 500, 1000, 2000, 5000, 10000]
     findings = next(f for f in foosh_load.findings if f.scenario == "start_workflow").by_analyzer()["saturation"]
     first = next(f for f in findings if f.subject == "first_to_break")
-    util_max = load["utilisation"][10000]
+    util_max = load.utilisation[10000]
     # utilisation is linear in users, so the break point is users / utilisation at that user count
     hottest = max(util_max, key=util_max.get)
     assert first.refs == [hottest]
     assert first.latency_ms == pytest.approx(10000 / util_max[hottest], rel=0.02)
     assert hottest in (API, "lambda:unreserved-pool")                   # a Lambda pool, never DynamoDB
-    pool = load["resources"]["lambda:unreserved-pool"]
+    pool = load.resources["lambda:unreserved-pool"]
     assert pool["slots"] == 900 and len(pool["members"]) == 15
     assert util_max[API] > 1.0 and util_max["lambda:unreserved-pool"] > 1.0   # both past saturation at 10k
     assert util_max[table("executions")] < 0.1                          # on-demand DynamoDB never the problem
-    assert r.load["latency"][100]["saturated"] is False and r.load["latency"][10000]["saturated"] is True
+    assert r.load.latency[100]["saturated"] is False and r.load.latency[10000]["saturated"] is True
 
 
 def test_load_ceilings_cite_the_attribute(foosh_load):

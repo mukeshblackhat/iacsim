@@ -13,7 +13,6 @@ inference:
           api_gateway_integration, target_group, env_var, iam_policy, vpc_peering]
 scenarios:
   sources: [yaml_file, inferred_from_entrypoints]
-  file: scenarios.yaml
 latency:
   profiles: [defaults]          # add ./profiles/team.yaml, ./calibrated.yaml ...
   rules: [distance, processing, cold_start, transition]   # transition = one state change per hop out of a state machine

@@ -14,7 +14,8 @@ from rich.table import Table
 from rich.text import Text
 
 from iacsim.core.interfaces import REPORTERS, Reporter
-from iacsim.core.models import DiffReport, Findings, InfraGraph
+from iacsim.core.models import Findings, InfraGraph
+from iacsim.diff.models import DiffReport
 from iacsim.reporter._brief import Brief, BriefBuilder, Section
 from iacsim.reporter._diff_brief import DiffBriefBuilder
 
@@ -23,14 +24,11 @@ WIDTH = 120
 
 @REPORTERS.register("text")
 class TextReporter(Reporter):
-    def __init__(self, color: bool = False, top_n: int = 10, all_hops: bool = False) -> None:
-        self.color, self.top_n, self.all_hops = color, top_n, all_hops
-
     def render(self, findings: list[Findings], graph: InfraGraph) -> str:
         buf = io.StringIO()
-        console = Console(file=buf, force_terminal=self.color, width=WIDTH, no_color=not self.color,
+        console = Console(file=buf, force_terminal=self.options.color, width=WIDTH, no_color=not self.options.color,
                           highlight=False)
-        builder = BriefBuilder(graph, top_n=self.top_n, all_hops=self.all_hops)
+        builder = BriefBuilder(graph, top_n=self.options.top_n, all_hops=self.options.all_hops)
         capacity = builder.build_capacity(findings)
         if capacity is not None:
             self._draw(console, capacity, rule="capacity")
@@ -44,7 +42,7 @@ class TextReporter(Reporter):
 
     def render_diff(self, diff: DiffReport, before: InfraGraph, after: InfraGraph) -> str:
         buf = io.StringIO()
-        console = Console(file=buf, force_terminal=self.color, width=WIDTH, no_color=not self.color,
+        console = Console(file=buf, force_terminal=self.options.color, width=WIDTH, no_color=not self.options.color,
                           highlight=False)
         for i, brief in enumerate(DiffBriefBuilder(before, after).build(diff)):
             self._draw(console, brief, rule="diff" if i == 0 else "scenario")

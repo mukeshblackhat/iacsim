@@ -77,7 +77,7 @@ class CloudFormationParser(Parser):
         resolve_physical_names(resources)
         for raw in resources:
             raw.references = addresses_in(raw.attrs)
-        return RawResources(resources=resources, format="cloudformation", root_path=str(path), warnings=warnings)
+        return RawResources(resources=resources, format="cloudformation", warnings=warnings)
 
     def _parse_file(self, file: Path, warnings: list[str]) -> list[RawResource]:
         doc = load_template(file)

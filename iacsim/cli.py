@@ -50,8 +50,10 @@ from iacsim.core.interfaces import (
     REPORTERS,
     SCENARIO_SOURCES,
     WALKERS,
+    ReporterOptions,
 )
 from iacsim.core.registry import load_builtin_plugins, load_entry_points, load_plugins_dir
+from iacsim.reporter.writer import write_graph, write_reports
 
 EXIT_OK, EXIT_PROBLEMS, EXIT_INPUT, EXIT_SOURCE = 0, 1, 2, 3
 
@@ -133,21 +135,15 @@ def _guard(command):
     return wrapper
 
 
-REPORT_EXTENSIONS = {"json": "json", "markdown": "md", "text": "txt"}
-
-
-def _write_reports(cfg, render, stem: str, out_dir: Path, **options) -> None:
+def _write_reports(cfg, render, stem: str, out_dir: Path, top_n: int = 10, all_hops: bool = False) -> None:
     """Text goes to stdout (coloured on a TTY); every other reporter writes
-    <out_dir>/<stem>.<ext>. `render(reporter)` produces the string."""
-    for name in cfg.get("report.outputs"):
-        color = {"color": sys.stdout.isatty()} if name == "text" else {}
-        rendered = render(REPORTERS.get(name)(**(options | color)))
-        if name == "text":
-            typer.echo(rendered, nl=False)
-        else:
-            path = out_dir / f"{stem}.{REPORT_EXTENSIONS.get(name, name)}"
-            path.write_text(rendered)
-            typer.echo(f"wrote {path}")
+    <out_dir>/<stem>.<ext> (reporter/writer.py, shared with the viewer)."""
+    options = ReporterOptions(top_n=top_n, all_hops=all_hops, color=sys.stdout.isatty())
+    text, written = write_reports(cfg.get("report.outputs"), render, stem, out_dir, options)
+    if text is not None:
+        typer.echo(text, nl=False)
+    for path in written:
+        typer.echo(f"wrote {path}")
 
 
 def _profiles(target: Path, profile: list[str] | None) -> list[str] | None:
@@ -208,8 +204,6 @@ def graph(
     workspace: str = typer.Option(None, help="value of terraform.workspace (default: default)"),
 ) -> None:
     """Parse + normalise + infer edges; write graph.json. No simulation."""
-    import json
-
     from iacsim.core import pipeline
     _bootstrap(target)
     cfg = load_config(_base_dir(target), {"format": fmt, "parsers.cloudformation.region": region,
@@ -217,7 +211,7 @@ def graph(
                                           "parsers.terraform.workspace": workspace})
     g, _ = pipeline.build_graph(target, cfg)
     out = _out_dir(target, cfg)
-    (out / "graph.json").write_text(json.dumps(g.to_dict(), indent=2, default=str))
+    write_graph(g, out)
     typer.echo(f"{len(g.nodes)} nodes, {len(g.edges)} edges → {out / 'graph.json'}")
     for w in g.warnings:
         typer.echo(f"warning: {w}", err=True)
@@ -238,7 +232,7 @@ def diff(
 ) -> None:
     """Run both snapshots with the same profile and report what changed:
     moved/added resources, per-category shift, changed hops, recommendations."""
-    from iacsim.differ import parse_threshold, run_diff, summarise
+    from iacsim.diff.differ import parse_threshold, run_diff, summarise
     _bootstrap(before)
     threshold = parse_threshold(fail_on_regression) if fail_on_regression else None
     overrides = {"latency.profiles": _profiles(before, profile), "report.outputs": output or None}
@@ -353,6 +347,7 @@ def calibrate(
     from iacsim.latency.calibrate import make_metric_source
     from iacsim.latency.calibrate.calibrator import calibrate as run_calibration
     from iacsim.latency.calibrate.writer import write_profile
+    from iacsim.reporter._calibrate_table import coverage_table
 
     _bootstrap(target)
     base = _base_dir(target)
@@ -371,7 +366,7 @@ def calibrate(
     graph, raw = pipeline.build_graph(target, cfg)
     result = run_calibration(graph, metric_source, cfg.get("calibrate.window"), fmt=raw.format)
 
-    typer.echo(_coverage_table(result, graph), nl=False)
+    typer.echo(coverage_table(result, graph), nl=False)
     if not result.covered:
         typer.echo("nothing calibrated — check calibrate.source / --window; defaults unchanged", err=True)
         raise typer.Exit(code=EXIT_PROBLEMS)
@@ -385,40 +380,6 @@ def calibrate(
     typer.echo(f"wrote {path}")
     shown = path.name if path.parent.resolve() == base.resolve() else path     # relative works: see _resolve
     typer.echo(f"next: iacsim run {target} --profile {shown}")
-
-
-def _coverage_table(result, graph) -> str:
-    """Covered nodes with the keys measured, skipped nodes with the reason, and
-    how many measurable nodes stay on defaults.yaml."""
-    import io
-
-    from rich.console import Console
-    from rich.table import Table
-
-    console = Console(file=io.StringIO(), force_terminal=False, width=110)
-    covered = Table(title=f"calibrated {len(result.covered)} node(s) — source={result.meta['source']}, "
-                          f"window={result.meta['window']}", show_lines=False)
-    covered.add_column("node"); covered.add_column("kind"); covered.add_column("measured")
-    for node_id in result.covered:
-        node = graph.nodes[node_id]
-        keys = ", ".join(f"{k}={v}" for k, v in result.measured[node_id].items())
-        if result.filled.get(node_id):
-            keys += f"  ({', '.join(result.filled[node_id])} from defaults)"
-        covered.add_row(node.label or node_id, node.subtype, keys)
-    console.print(covered)
-    if result.skipped:
-        skipped = Table(title=f"skipped {len(result.skipped)} node(s) — defaults kept")
-        skipped.add_column("node"); skipped.add_column("kind"); skipped.add_column("reason")
-        for node_id, reason in result.skipped:
-            node = graph.nodes[node_id]
-            skipped.add_row(node.label or node_id, node.subtype, reason)
-        console.print(skipped)
-    measurable = sum(1 for n in graph.nodes.values() if n.subtype in _MEASURABLE)
-    console.print(f"{measurable - len(result.covered)} of {measurable} measurable node(s) stay on defaults.yaml")
-    return console.file.getvalue()
-
-
-_MEASURABLE = ("lambda", "dynamodb", "rds", "alb", "api_gateway", "step_functions")
 
 
 @app.command()

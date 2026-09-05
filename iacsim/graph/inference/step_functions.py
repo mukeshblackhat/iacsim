@@ -18,13 +18,15 @@ Task targets:
   arn:aws:states:::sqs:sendMessage / sns:publish                            → PUBLISH
   arn:aws:states:::states:startExecution Parameters.StateMachineArn         → INVOKE
 
-The walked structure is stored on the orchestrator node as attrs["workflow"]:
-    [{"state": ..., "type": "Task", "target": address, "kind": "invoke"},
+The walked structure is stored on the orchestrator node as attrs["workflow"] —
+a list of `WorkflowStep.to_dict()` (core/models.py), e.g.
+    [{"state": ..., "type": "Task", "target": address, "kind": "invoke", "resource": ...},
      {"state": ..., "type": "Map", "concurrency": 5, "body": [...]},
      {"state": ..., "type": "Parallel", "branches": [[...], [...]]},
      {"state": ..., "type": "Choice", "branches": {"NextState": [...], ...}},
      {"state": ..., "type": "Wait", "seconds": 20}]
-so the simulator can replay ordering, parallelism and fan-out.
+so the simulator can replay ordering, parallelism and fan-out
+(`WorkflowStep.from_dicts` turns it back into typed steps).
 """
 
 from __future__ import annotations
@@ -35,7 +37,7 @@ from pathlib import Path
 from typing import Any
 
 from iacsim.core.interfaces import INFERENCE_RULES, InferenceRule
-from iacsim.core.models import Confidence, Edge, EdgeKind, InfraGraph, NodeKind, RawResources
+from iacsim.core.models import Confidence, Edge, EdgeKind, InfraGraph, NodeKind, RawResources, WorkflowStep
 from iacsim.graph.inference._common import first_node, raw_by_address, short
 
 _TEMPLATE_VAR = re.compile(r"\$\{(\w+)\}")
@@ -66,7 +68,7 @@ class StepFunctionsRule(InferenceRule):
                 graph.warnings.append(f"{sm.id}: state machine definition could not be read ({source})")
                 continue
             walker = _Walker(graph, sm.id, source)
-            sm.attrs["workflow"] = walker.walk(definition)
+            sm.attrs["workflow"] = [step.to_dict() for step in walker.walk(definition)]
             edges.extend(walker.edges)
         return edges
 
@@ -114,12 +116,12 @@ class _Walker:
         self.edges: list[Edge] = []
         self._seen_targets: set[tuple[str, str]] = set()
 
-    def walk(self, container: dict) -> list[dict]:
+    def walk(self, container: dict) -> list[WorkflowStep]:
         states = container.get("States", {})
         return self._flow(states, container.get("StartAt"), set())
 
-    def _flow(self, states: dict, start: str | None, on_path: set[str]) -> list[dict]:
-        out: list[dict] = []
+    def _flow(self, states: dict, start: str | None, on_path: set[str]) -> list[WorkflowStep]:
+        out: list[WorkflowStep] = []
         name = start
         while name and name in states and name not in on_path:
             state = states[name]
@@ -132,28 +134,28 @@ class _Walker:
             name = state.get("Next")
         return out
 
-    def _visit(self, name: str, state: dict, states: dict, on_path: set[str]) -> dict | None:
+    def _visit(self, name: str, state: dict, states: dict, on_path: set[str]) -> WorkflowStep | None:
         kind = state.get("Type")
         if kind == "Task":
             target, edge_kind = self._task_target(name, state)
-            return {"state": name, "type": "Task", "target": target, "kind": edge_kind.value if edge_kind else None,
-                    "resource": state.get("Resource")}
+            return WorkflowStep("Task", name, target=target, kind=edge_kind.value if edge_kind else None,
+                                resource=state.get("Resource"))
         if kind == "Map":
             body = state.get("ItemProcessor") or state.get("Iterator") or {}
-            return {"state": name, "type": "Map", "concurrency": state.get("MaxConcurrency"),
-                    "body": self._flow(body.get("States", {}), body.get("StartAt"), set())}
+            return WorkflowStep("Map", name, concurrency=state.get("MaxConcurrency"),
+                                body=self._flow(body.get("States", {}), body.get("StartAt"), set()))
         if kind == "Parallel":
-            return {"state": name, "type": "Parallel",
-                    "branches": [self._flow(b.get("States", {}), b.get("StartAt"), set())
-                                 for b in state.get("Branches", [])]}
+            return WorkflowStep("Parallel", name,
+                                branches=[self._flow(b.get("States", {}), b.get("StartAt"), set())
+                                          for b in state.get("Branches", [])])
         if kind == "Choice":
             nexts = [c.get("Next") for c in state.get("Choices", []) if c.get("Next")]
             if state.get("Default"):
                 nexts.append(state["Default"])
-            return {"state": name, "type": "Choice",
-                    "branches": {n: self._flow(states, n, on_path) for n in dict.fromkeys(nexts)}}
+            choices = {n: self._flow(states, n, on_path) for n in dict.fromkeys(nexts)}
+            return WorkflowStep("Choice", name, choices=choices)
         if kind == "Wait":
-            return {"state": name, "type": "Wait", "seconds": state.get("Seconds")}
+            return WorkflowStep("Wait", name, seconds=state.get("Seconds"))
         return None                                      # Pass / Succeed / Fail add nothing
 
     def _task_target(self, name: str, state: dict) -> tuple[str | None, EdgeKind | None]:

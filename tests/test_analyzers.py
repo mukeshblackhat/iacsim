@@ -1,6 +1,7 @@
 """Analyzers on a hand-built Result — no parser, no walker."""
 
 import pytest
+from conftest import tiny_graph
 
 from iacsim.core.interfaces import ANALYZERS
 from iacsim.core.models import HopResult, InfraGraph, Node, NodeKind, Placement, Result
@@ -12,12 +13,8 @@ def setup_module():
 
 
 def _graph(db_region="us-east-1") -> InfraGraph:
-    g = InfraGraph()
-    g.add_node(Node("internet", NodeKind.EXTERNAL, "internet"))
-    g.add_node(Node("lb", NodeKind.LB, "alb", Placement(region="us-east-1")))
-    g.add_node(Node("web", NodeKind.COMPUTE, "ec2", Placement(region="us-east-1", az="us-east-1a")))
-    g.add_node(Node("fn", NodeKind.COMPUTE, "lambda", Placement(region="us-east-1")))
-    g.add_node(Node("db", NodeKind.DATASTORE, "rds", Placement(region=db_region, az=f"{db_region}a")))
+    """The shared tiny graph plus a `cache` node for the off-critical-path hop."""
+    g = tiny_graph(db_region=db_region)
     g.add_node(Node("cache", NodeKind.DATASTORE, "elasticache", Placement(region="us-east-1", az="us-east-1a")))
     return g
 
@@ -149,14 +146,7 @@ def _sampled_result():
 
 
 def _tiny_graph():
-    from iacsim.core.models import InfraGraph, Node, NodeKind, Placement
-    g = InfraGraph()
-    us = Placement(region="us-east-1")
-    g.add_node(Node("internet", NodeKind.EXTERNAL, "internet"))
-    g.add_node(Node("gw", NodeKind.GATEWAY, "api_gateway", us))
-    g.add_node(Node("fn", NodeKind.COMPUTE, "lambda", us))
-    g.add_node(Node("table", NodeKind.DATASTORE, "dynamodb", us))
-    return g
+    return tiny_graph()
 
 
 def test_tail_risk_is_silent_without_samples():

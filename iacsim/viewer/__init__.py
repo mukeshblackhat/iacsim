@@ -6,6 +6,8 @@ the infra graph in region/AZ swimlanes with the scenario paths overlaid. This
 module only prepares the directory and serves it:
 
     prepare(target, cfg)  → <target>/.iacsim/ with report.json, graph.json, index.html
+                            (the pipeline runs when report.json is missing or older than
+                            the IaC / scenarios / config files next to the target)
     bind(directory, port) → (server, url)   — the URL is known before anything blocks
     run(server, …)        → serves until Ctrl-C (or `duration` seconds); opens the browser
     serve(directory, …)   → bind + run in one call
@@ -16,7 +18,6 @@ so it works on any report.json from any version that keeps schema 2.
 
 from __future__ import annotations
 
-import json
 import shutil
 import threading
 import time
@@ -26,23 +27,33 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from iacsim.core.config import Config
-from iacsim.core.interfaces import REPORTERS
+from iacsim.reporter.writer import write_graph, write_reports
 
 VIEWER_HTML = Path(__file__).with_name("index.html")
+INPUT_GLOBS = ("*.tf", "*.tf.json", "*.tofu", "*.tfvars", "template.json", "template.y*ml",
+               "scenarios.yaml", "iacsim.yaml", "load.yaml")
 
 
 def prepare(target: Path, cfg: Config) -> Path:
-    """Make sure report.json / graph.json exist for `target`, drop index.html beside them."""
+    """Make sure a fresh report.json / graph.json exist for `target`, drop index.html beside them."""
     from iacsim.core import pipeline
     base = target if target.is_dir() else target.parent
     out_dir = base / cfg.get("report.out_dir")
     out_dir.mkdir(parents=True, exist_ok=True)
-    if not (out_dir / "report.json").is_file():
+    if is_stale(out_dir / "report.json", base):
         output = pipeline.run(target, cfg)
-        (out_dir / "report.json").write_text(REPORTERS.get("json")().render(output.findings, output.graph))
-        (out_dir / "graph.json").write_text(json.dumps(output.graph.to_dict(), indent=2, default=str))
+        write_reports(["json"], lambda r: r.render(output.findings, output.graph), "report", out_dir)
+        write_graph(output.graph, out_dir)
     shutil.copyfile(VIEWER_HTML, out_dir / "index.html")
     return out_dir
+
+
+def is_stale(report: Path, base: Path) -> bool:
+    """No report yet, or any input file beside the target is newer than it."""
+    if not report.is_file():
+        return True
+    newest = max((p.stat().st_mtime_ns for g in INPUT_GLOBS for p in base.glob(g)), default=0)
+    return newest > report.stat().st_mtime_ns
 
 
 class _QuietHandler(SimpleHTTPRequestHandler):

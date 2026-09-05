@@ -10,7 +10,7 @@ from pathlib import Path
 from iacsim.core.config import load_config
 from iacsim.core.models import EdgeKind, NodeKind
 from iacsim.core.pipeline import run
-from iacsim.differ import diff_graphs
+from iacsim.diff.differ import diff_graphs
 
 EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 

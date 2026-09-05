@@ -7,11 +7,11 @@ registry's `.register("name")`, and reference "name" in iacsim.yaml.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from iacsim.core.models import (
-    DiffReport,
     Edge,
     Findings,
     InfraGraph,
@@ -21,6 +21,7 @@ from iacsim.core.models import (
     Scenario,
 )
 from iacsim.core.registry import Registry
+from iacsim.diff.models import DiffReport
 
 
 class Parser(ABC):
@@ -92,8 +93,20 @@ class Analyzer(ABC):
     def analyse(self, result: Result, graph: InfraGraph) -> list: ...
 
 
+@dataclass
+class ReporterOptions:
+    """What the CLI lets a user change about rendering; every reporter gets the
+    same object and reads what it needs."""
+    top_n: int = 10          # hops / bottlenecks shown per section
+    all_hops: bool = False   # show every hop in path order
+    color: bool = False      # ANSI colour (text reporter, TTY only)
+
+
 class Reporter(ABC):
     """Renders Findings (or a diff) to a string / file."""
+
+    def __init__(self, options: ReporterOptions | None = None) -> None:
+        self.options = options or ReporterOptions()
 
     @abstractmethod
     def render(self, findings: list[Findings], graph: InfraGraph) -> str: ...

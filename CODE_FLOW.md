@@ -32,7 +32,7 @@ objects that travel between stages are plain dataclasses in `iacsim/core/models.
 | `Scenario` / `Step` — a request path | `iacsim/core/models.py:177`, `:157` | `iacsim/core/pipeline.py:94` from `iacsim/scenarios/yaml_file.py:41` and `iacsim/scenarios/inferred.py:59` | `Planner.plan` |
 | `Result` / `HopResult` — one walked scenario | `iacsim/core/models.py:237`, `:221` | `iacsim/simulator/traversal.py:~372 build_result` | analyzers |
 | `Findings` / `Finding` — report lines | `iacsim/core/models.py:277`, `:255` | `iacsim/core/pipeline.py:121` | reporters, differ |
-| `DiffReport` and friends | `iacsim/core/models.py:437` (and `:319` onward) | `iacsim/differ.py:69` | `Reporter.render_diff` |
+| `DiffReport` and friends | `iacsim/diff/models.py:124` (and `:11` onward) | `iacsim/diff/differ.py:59` | `Reporter.render_diff` |
 | `PipelineOutput` — everything from one run | `iacsim/core/pipeline.py:35` | `iacsim/core/pipeline.py:140` | CLI, viewer, differ |
 
 ---
@@ -58,7 +58,7 @@ Every command starts the same way:
 | 1 | `_bootstrap`, `load_config` | above | overrides: `latency.profiles` (`"defaults"` is always first, then each `-p`), `simulation.walker/samples/seed/load`, `format`, `parsers.cloudformation.region`, `report.outputs` |
 | 2 | **branch:** `simulation.walker == "load"` | `iacsim/cli.py:~97` | resolves `load.yaml` relative to the base dir; missing → `BadParameter` (exit 2). Other walkers skip this. |
 | 3 | `pipeline.run(target, cfg)` | `iacsim/core/pipeline.py:140` | the eight stages below |
-| 4 | `_write_reports` | `iacsim/cli.py:55` | for each name in `report.outputs`: `text` → stdout (colour only on a TTY); anything else → `<base>/.iacsim/report.<ext>` |
+| 4 | `write_reports` | `iacsim/reporter/writer.py:16` | for each name in `report.outputs`: `text` → stdout (colour only on a TTY); anything else → `<base>/.iacsim/report.<ext>` |
 
 **`pipeline.run` in order** (`iacsim/core/pipeline.py:140-149`):
 
@@ -84,16 +84,16 @@ the profile rung → exit 1 if any problem, else 0. (Current pass: warnings alon
 failing unless `--strict`.)
 
 ### 2.4 `iacsim diff <before> <after>` — `iacsim/cli.py:134`
-1. `_bootstrap(before)`; parse `--fail-on-regression` (`iacsim/differ.py:221`).
+1. `_bootstrap(before)`; parse `--fail-on-regression` (`iacsim/diff/differ.py:211`).
 2. Two `load_config` calls (one per side) with the same overrides.
-3. `run_diff` (`iacsim/differ.py:48`): forces the *after* side to use the *before* side's
+3. `run_diff` (`iacsim/diff/differ.py:44`): forces the *after* side to use the *before* side's
    profiles so numbers differ only because the infra does → `pipeline.run` twice → optional
-   `--scenario` filter → `diff_reports` (`iacsim/differ.py:69`) → `diff_graphs`
-   (`iacsim/differ.py:84`: nodes by id, or by label with `--align-by label`; a "move" is a
-   change of region/az/vpc) + per-scenario `diff_scenario` (`iacsim/differ.py:132`) → values,
-   hops by label + occurrence (`iacsim/differ.py:174`), recommendations (`iacsim/differ.py:204`).
+   `--scenario` filter → `diff_reports` (`iacsim/diff/differ.py:59`) → `diff_graphs`
+   (`iacsim/diff/differ.py:74`: nodes by id, or by label with `--align-by label`; a "move" is a
+   change of region/az/vpc) + per-scenario `diff_scenario` (`iacsim/diff/differ.py:122`) → values,
+   hops by label + occurrence (`iacsim/diff/differ.py:164`), recommendations (`iacsim/diff/differ.py:194`).
 4. Render through each reporter's `render_diff`; text → stdout, others → `<after>/.iacsim/diff.<ext>`.
-5. `summarise` (`iacsim/differ.py:230`) → threshold check → exit 2 on a regression.
+5. `summarise` (`iacsim/diff/differ.py:220`) → threshold check → exit 2 on a regression.
 
 ### 2.5 `iacsim view <target>` — `iacsim/cli.py:216`
 `load_config` with `report.outputs = ["json"]` → `viewer.prepare` (`iacsim/viewer/__init__.py:32`:
@@ -131,8 +131,9 @@ graph.source_format = raw.format; graph.warnings += raw.warnings
 for rule_name in cfg["inference.rules"]:                          pipeline.py:53   ← ORDER FROM CONFIG
     for edge in INFERENCE_RULES.get(rule_name)().apply(graph, raw):
         edge.rule = rule_name
-        if graph.find_edge(edge.src, edge.dst) is None:           pipeline.py:57   ← today: first rule wins
-            graph.add_edge(edge)                                  (current pass: merge, kinds kept in Edge.ops)
+        _merge_edge(index, edge)                                  pipeline.py:~57  ← one edge per (src, dst);
+                                                                  every kind a rule found goes into Edge.ops,
+                                                                  kind = highest priority (READ over WRITE)
 ```
 
 Default rule order (`iacsim/core/config.py:22-31`) is a confidence order:
@@ -280,11 +281,11 @@ the same caller. Then **`_edge_for`** (`:~210`) — the four-way ladder, in this
 
 `op:` on the step re-prices the edge as that kind (`_reprice` `:~227`).
 
-**`_charge`** (`:~236`) — the ×2 rule. Today: response legs drop `distance` only; every
-other hop with a synchronous kind (invoke/read/write/route, `SYNCHRONOUS` `:~63`) doubles
-`distance`; processing and cold start once. **After WP1:** a response leg charges only the
-destination's `respond` key (default 0) — no distance, no cold start — and every hop *out of*
-an orchestrator additionally charges `transition` (new cost rule).
+**`_charge`** (`:~236`) — the ×2 rule. Every hop with a synchronous kind (invoke/read/write/
+route, `SYNCHRONOUS` `:~63`) doubles `distance`; processing and cold start count once. A
+response leg (destination already visited) charges only the destination's `respond` key
+(default 0) — no distance, no cold start. Every hop *out of* an orchestrator additionally
+charges `transition` (the `transition` cost rule, on by default since WP1).
 
 **`evaluate(plan, backend)`** (`:~324`): hops → `backend.cost(hop)` scaled by `waves`
 (`_scaled` `:~363`); groups → evaluate every branch, take `backend.maximum`, mark only the

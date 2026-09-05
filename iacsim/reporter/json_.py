@@ -65,14 +65,12 @@ import json
 from datetime import UTC, datetime
 
 from iacsim.core.interfaces import REPORTERS, Reporter
-from iacsim.core.models import SCHEMA_VERSION, DiffReport, Findings, InfraGraph
+from iacsim.core.models import SCHEMA_VERSION, Findings, InfraGraph
+from iacsim.diff.models import DiffReport
 
 
 @REPORTERS.register("json")
 class JsonReporter(Reporter):
-    def __init__(self, **_ignored) -> None:
-        pass
-
     def render(self, findings: list[Findings], graph: InfraGraph) -> str:
         sources = findings[0].profile_sources if findings else []
         return json.dumps(
@@ -84,28 +82,28 @@ class JsonReporter(Reporter):
                 "scenarios": [f.to_dict() for f in findings],
                 "capacity": _capacity(findings),
             },
-            indent=2, default=str,
+            indent=2, default=str, allow_nan=False,
         )
 
     def render_diff(self, diff: DiffReport, before: InfraGraph, after: InfraGraph) -> str:
         payload = diff.to_dict()
         payload["generated_at"] = datetime.now(UTC).isoformat(timespec="seconds")
-        return json.dumps(payload, indent=2, default=str)
+        return json.dumps(payload, indent=2, default=str, allow_nan=False)
 
 
 def _capacity(findings: list[Findings]) -> dict:
     """The load sweep once, at the top level (it is identical on every scenario)."""
-    first = next((f for f in findings if f.load and f.load.get("resources")), None)
+    first = next((f for f in findings if f.load and f.load.resources), None)
     if first is None:
         return {}
     load = first.load
     breaks = [f for f in first.by_analyzer().get("saturation", []) if f.subject == "first_to_break"]
     return {
-        "users": load["users"],
-        "thresholds": load.get("thresholds", {}),
-        "assumptions": load.get("assumptions", []),
-        "resources": load["resources"],
-        "utilisation": load["utilisation"],
+        "users": load.users,
+        "thresholds": load.thresholds,
+        "assumptions": load.assumptions,
+        "resources": load.resources,
+        "utilisation": load.utilisation,
         "first_to_break": ({"resource": breaks[0].refs[0], "users": breaks[0].latency_ms, "detail": breaks[0].detail}
                            if breaks else None),
     }

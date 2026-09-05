@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from iacsim.core.interfaces import PROFILE_SOURCES, WALKERS
+from iacsim.core.interfaces import WALKERS
 from iacsim.core.models import (
     Confidence,
     Edge,
@@ -19,7 +19,7 @@ from iacsim.core.models import (
     Step,
 )
 from iacsim.core.registry import load_builtin_plugins
-from iacsim.latency.profile import merge_profiles
+from iacsim.latency.profile import load_default_profile
 from iacsim.simulator import capacity as cap
 from iacsim.simulator.load import LoadProfile, LoadProfileError, PerUser, parse_interval, parse_load
 from iacsim.simulator.traversal import ExpectedBackend, Planner, build_result, evaluate
@@ -100,7 +100,7 @@ def test_huge_server_count_is_mm_infinity():
 # ------------------------------------------------------------------ capacity from attrs
 
 def _profile():
-    return merge_profiles([("defaults", PROFILE_SOURCES.get("defaults")().load("defaults"))])
+    return load_default_profile()
 
 
 def _graph():
@@ -215,8 +215,8 @@ def test_fanout_erlangs_scale_with_copies_not_waves():
     load = LoadProfile(users=[1], per_user=[PerUser("fan", every_s=1.0)])
     r = walker.run(g, scenarios[0], price=None, profile=_profile(), scenarios=scenarios, load=load)
     assert r.shape["fanout_waves"] == 4                                         # 2 + 2: latency pays waves
-    util = r.load["utilisation"][1]
-    pool = r.load["resources"][cap.UNRESERVED_POOL]
+    util = r.load.utilisation[1]
+    pool = r.load.resources[cap.UNRESERVED_POOL]
     # λ·copies·hold/slots
     assert util[cap.UNRESERVED_POOL] == pytest.approx(1.0 * 10 * 0.100 / pool["slots"], rel=1e-3)
     # rps-capped: λ·copies/rps (stored to 4 dp)
@@ -227,10 +227,11 @@ def test_reserved_concurrency_zero_is_throttled_off():
     g = _graph()
     g.nodes["fn"].attrs["concurrency"] = 0
     r = _run_load(g, _load([100]))[0]
-    assert r.load["utilisation"][100]["fn"] is None                             # no servers: SAT, not 0 %
-    assert r.load["latency"][100]["saturated"] and r.load["latency"][100]["saturated_by"] == ["fn"]
-    assert "throttled off" in r.load["resources"]["fn"]["source"]
-    assert "Infinity" not in json.dumps(r.load)
+    assert r.load.utilisation[100]["fn"] is None                             # no servers: SAT, not 0 %
+    assert r.load.latency[100]["saturated"] and r.load.latency[100]["saturated_by"] == ["fn"]
+    assert "throttled off" in r.load.resources["fn"]["source"]
+    # a saturated sweep is valid JSON: null, not inf
+    assert "Infinity" not in json.dumps(r.load.to_dict(), allow_nan=False)
     from iacsim.core.interfaces import ANALYZERS
     findings = ANALYZERS.get("saturation")().analyse(r, g)
     first = next(f for f in findings if f.subject == "first_to_break")
@@ -241,10 +242,10 @@ def test_while_running_without_a_mix_is_a_stated_assumption():
     g = _graph()
     load = LoadProfile(users=[10], per_user=[PerUser("hit", every_s=2.0, while_running=True)])
     r = _run_load(g, load)[0]
-    assert any("'while: running' with no workflow_mix" in a for a in r.load["assumptions"])
-    assert r.load["tail_factor"] == 1.3
+    assert any("'while: running' with no workflow_mix" in a for a in r.load.assumptions)
+    assert r.load.tail_factor == 1.3
     plain = _run_load(g, _load([10]))[0]
-    assert not any("while: running" in a for a in plain.load["assumptions"])
+    assert not any("while: running" in a for a in plain.load.assumptions)
 
 
 # ------------------------------------------------------------------ the load walker on a hand-built graph
@@ -265,13 +266,13 @@ def test_reserved_lambda_saturates_where_the_arithmetic_says():
     # one request/s/user → erlangs = 0.029 × U; 10 slots → ρ = 1 at U ≈ 345.
     g = _graph()
     r = _run_load(g, _load([100, 200, 400]))[0]
-    util = r.load["utilisation"]
+    util = r.load.utilisation
     assert util[100]["fn"] == pytest.approx(0.29, abs=0.01)
     assert util[200]["fn"] == pytest.approx(0.58, abs=0.01)
-    assert util[400]["fn"] >= 1.0 and r.load["latency"][400]["saturated"]
-    assert r.load["latency"][400]["saturated_by"] == ["fn"]
-    assert r.load["latency"][100]["expected_ms"] >= r.total_ms          # queueing only adds
-    assert r.load["latency"][100]["p99_ms"] >= 1.3 * r.total_ms
+    assert util[400]["fn"] >= 1.0 and r.load.latency[400]["saturated"]
+    assert r.load.latency[400]["saturated_by"] == ["fn"]
+    assert r.load.latency[100]["expected_ms"] >= r.total_ms          # queueing only adds
+    assert r.load.latency[100]["p99_ms"] >= 1.3 * r.total_ms
     assert all(util[u]["fn"] <= util[v]["fn"] for u, v in [(100, 200), (200, 400)])   # monotone
     assert r.total_ms == pytest.approx(59.0)                            # base numbers untouched
 

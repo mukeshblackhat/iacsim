@@ -24,16 +24,12 @@ from collections import Counter
 from pathlib import Path
 
 from iacsim.core.config import Config
-from iacsim.core.interfaces import REPORTERS
-from iacsim.core.models import (
+from iacsim.core.models import Finding, Findings, HopResult, InfraGraph
+from iacsim.diff.models import (
     CHANGE_THRESHOLD_MS,
     DiffReport,
-    Finding,
-    Findings,
     GraphDiff,
     HopDelta,
-    HopResult,
-    InfraGraph,
     NodeMove,
     RecommendationDelta,
     ScenarioDiff,
@@ -58,12 +54,6 @@ def run_diff(before: Path, before_cfg: Config, after: Path, after_cfg: Config,
     report = diff_reports(b_findings, a_findings, b.graph, a.graph, align_by=align_by)
     report.before, report.after = str(before), str(after)
     return report, b.graph, a.graph
-
-
-def diff_targets(before: Path, before_cfg: Config, after: Path, after_cfg: Config) -> str:
-    """Convenience: the text rendering of run_diff."""
-    report, b_graph, a_graph = run_diff(before, before_cfg, after, after_cfg)
-    return REPORTERS.get("text")().render_diff(report, b_graph, a_graph)
 
 
 def diff_reports(before: list[Findings], after: list[Findings],

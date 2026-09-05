@@ -11,12 +11,21 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+from conftest import example_copy
+
 from iacsim.core.config import load_config
 from iacsim.core.pipeline import build_graph
 
 ROOT = Path(__file__).resolve().parent.parent
 FOOSH = ROOT / "examples" / "foosh-serverless"
 IACSIM = [sys.executable, "-m", "iacsim.cli"]
+
+
+@pytest.fixture(scope="module")
+def foosh_copy(tmp_path_factory) -> Path:
+    """The CLI writes .iacsim/ next to its target, so subprocess runs use a throwaway copy."""
+    return example_copy("foosh-serverless", tmp_path_factory.mktemp("perf"))
 
 
 def _ms(fn) -> float:
@@ -31,9 +40,9 @@ def test_second_parse_of_the_same_stack_is_cached():
     assert _ms(lambda: build_graph(FOOSH, cfg)) < 50      # measured ~6 ms; was ~137 ms before the cache
 
 
-def test_run_and_plugins_wall_time_are_bounded():
+def test_run_and_plugins_wall_time_are_bounded(foosh_copy):
     t = time.perf_counter()
-    r = subprocess.run([*IACSIM, "run", str(FOOSH), "-o", "json"], capture_output=True, cwd=ROOT, check=False)
+    r = subprocess.run([*IACSIM, "run", str(foosh_copy), "-o", "json"], capture_output=True, cwd=ROOT, check=False)
     assert r.returncode == 0, r.stderr
     assert time.perf_counter() - t < 1.5                   # measured ~0.16 s
     t = time.perf_counter()
@@ -42,12 +51,14 @@ def test_run_and_plugins_wall_time_are_bounded():
     assert time.perf_counter() - t < 0.5                   # measured ~0.06 s
 
 
-def test_caches_change_no_output():
+def test_caches_change_no_output(foosh_copy):
     """The default run's report.json (minus generated_at) is byte-identical to the
-    recorded hash. Update the fixture only when a *modelling* change is intended."""
-    r = subprocess.run([*IACSIM, "run", str(FOOSH), "-o", "json"], capture_output=True, cwd=ROOT, check=False)
+    recorded hash. Update the fixture only when a change to the *contract* is
+    intended (WP8 regenerated it once: the never-set `Latency.p50/p99/distribution`
+    fields, serialised as null on every edge, were removed — nothing else moved)."""
+    r = subprocess.run([*IACSIM, "run", str(foosh_copy), "-o", "json"], capture_output=True, cwd=ROOT, check=False)
     assert r.returncode == 0, r.stderr
-    doc = json.loads((FOOSH / ".iacsim" / "report.json").read_text())
+    doc = json.loads((foosh_copy / ".iacsim" / "report.json").read_text())
     doc.pop("generated_at", None)
     digest = hashlib.sha256(json.dumps(doc, sort_keys=True).encode()).hexdigest()
     expected = (ROOT / "tests" / "fixtures" / "foosh_report_sha256.txt").read_text().strip()

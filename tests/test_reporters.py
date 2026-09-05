@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from iacsim.core.interfaces import REPORTERS
+from iacsim.core.interfaces import REPORTERS, ReporterOptions
 
 SCENARIO_KEYS = {"name", "description", "source", "total_ms", "percentiles", "samples", "load", "shape", "profile",
                  "hops",
@@ -33,8 +33,8 @@ def test_text_report_has_the_brief_sections(classic_web_bad_run):
 
 
 def test_all_hops_flag_shows_path_order(foosh_run):
-    top = REPORTERS.get("text")(top_n=3).render(foosh_run.findings, foosh_run.graph)
-    everything = REPORTERS.get("text")(all_hops=True).render(foosh_run.findings, foosh_run.graph)
+    top = REPORTERS.get("text")(ReporterOptions(top_n=3)).render(foosh_run.findings, foosh_run.graph)
+    everything = REPORTERS.get("text")(ReporterOptions(all_hops=True)).render(foosh_run.findings, foosh_run.graph)
     assert "top 3 of" in top and "all 13 hops in path order" in everything
 
 

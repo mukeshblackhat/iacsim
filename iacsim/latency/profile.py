@@ -14,6 +14,7 @@ import yaml
 
 from iacsim.core.interfaces import PROFILE_SOURCES, ProfileSource
 from iacsim.core.models import Profile
+from iacsim.core.util import deep_merge
 
 DEFAULTS_PATH = Path(__file__).with_name("defaults.yaml")
 _DEFAULTS_CACHE: tuple[int, dict[str, Any]] | None = None     # (mtime_ns, parsed document)
@@ -44,7 +45,7 @@ class YamlProfileSource(ProfileSource):
 def merge_profiles(layers: list[tuple[str, dict[str, Any]]]) -> Profile:
     merged: dict[str, Any] = {}
     for _name, layer in layers:
-        merged = _deep_merge(merged, layer)
+        merged = deep_merge(merged, layer)
     return Profile(
         meta=merged.get("meta", {}),
         distance=merged.get("distance", {}),
@@ -67,8 +68,12 @@ def describe_layer(spec: str, layer: dict[str, Any]) -> str:
     return f"{spec} ({source}, {window})" if window else f"{spec} ({source})"
 
 
-def _deep_merge(base: dict, override: dict) -> dict:
-    out = dict(base)
-    for k, v in override.items():
-        out[k] = _deep_merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
-    return out
+def load_defaults_document() -> dict[str, Any]:
+    """The parsed defaults.yaml (rung 0) as a plain dict — a fresh copy."""
+    return DefaultsProfileSource().load("defaults")
+
+
+def load_default_profile() -> Profile:
+    """The built-in defaults as a Profile — what every test and the calibrator
+    start from; the pipeline layers --profile files on top via merge_profiles."""
+    return merge_profiles([("defaults", load_defaults_document())])

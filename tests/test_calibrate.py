@@ -13,7 +13,7 @@ from iacsim.latency.calibrate import make_metric_source
 from iacsim.latency.calibrate.calibrator import calibrate
 from iacsim.latency.calibrate.fake import FakeMetricSource
 from iacsim.latency.calibrate.writer import write_profile
-from iacsim.latency.profile import describe_layer, merge_profiles
+from iacsim.latency.profile import describe_layer, load_defaults_document, merge_profiles
 
 EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 FIXTURE = EXAMPLES / "foosh-serverless" / "calibrate-fixture.yaml"
@@ -153,7 +153,7 @@ def test_writer_round_trips_through_the_profile_source_in_order(tmp_path):
 
 def test_processing_for_precedence_defaults_then_label_then_id():
     node = Node("fn", NodeKind.COMPUTE, "lambda", Placement(), label="my-fn")
-    layers = [("defaults", PROFILE_SOURCES.get("defaults")().load("defaults")),
+    layers = [("defaults", load_defaults_document()),
               ("cal", {"processing": {"lambda": {"by_label": {"my-fn": {"warm": 20, "cold": 900}},
                                                  "per_resource": {"fn": {"warm": 30}}}}})]
     block = merge_profiles(layers).processing_for(node)

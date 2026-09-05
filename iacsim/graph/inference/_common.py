@@ -27,16 +27,6 @@ def first_node(graph: InfraGraph, value: Any, kinds: Iterable[NodeKind] | None =
     return None
 
 
-def nodes_in(graph: InfraGraph, value: Any, kinds: Iterable[NodeKind] | None = None) -> list[str]:
-    wanted = set(kinds) if kinds else None
-    out = []
-    for address in addresses_in(value):
-        node = graph.nodes.get(address)
-        if node and (wanted is None or node.kind in wanted) and address not in out:
-            out.append(address)
-    return out
-
-
 def task_definition_of(raws: dict[str, RawResource], r: RawResource | None) -> RawResource | None:
     """An ECS service's container config lives on its task definition (glue,
     not a node): follow `task_definition` so env vars and roles can be read

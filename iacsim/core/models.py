@@ -34,14 +34,12 @@ class RawResource:
     references: list[str] = field(default_factory=list)
     region: str | None = None           # from the provider (or alias) this resource uses
     source_file: str | None = None
-    source_line: int | None = None
 
 
 @dataclass
 class RawResources:
     resources: list[RawResource]
     format: str                         # "terraform" | "cloudformation"
-    root_path: str
     warnings: list[str] = field(default_factory=list)
 
 
@@ -97,6 +95,11 @@ CONFIDENCE_ORDER = [Confidence.DECLARED, Confidence.HIGH, Confidence.MEDIUM, Con
 KIND_PRIORITY = [EdgeKind.INVOKE, EdgeKind.ROUTE, EdgeKind.CONSUME, EdgeKind.PUBLISH,
                  EdgeKind.READ, EdgeKind.WRITE, EdgeKind.PEER]
 
+# Attributes that hold a resource's physical (AWS) name, in lookup order. The
+# normaliser reads them for `Node.label`; the CloudFormation adapter uses the
+# same list to turn literal names in env vars back into references.
+PHYSICAL_NAME_ATTRS = ("function_name", "name", "identifier", "bucket", "rest_api_name")
+
 
 @dataclass
 class Placement:
@@ -109,12 +112,9 @@ class Placement:
 @dataclass
 class Latency:
     """Cost of one hop, in milliseconds. `expected` feeds the deterministic walker;
-    the rest feed Monte-Carlo. `breakdown` says where the number came from, e.g.
-    {"distance": 65.0, "processing": 4.0, "cold_start": 20.0}."""
+    the Monte-Carlo walker draws around it using the profile's variance. `breakdown`
+    says where the number came from, e.g. {"distance": 65.0, "processing": 4.0}."""
     expected: float
-    p50: float | None = None
-    p99: float | None = None
-    distribution: str | None = None       # "lognormal", "bimodal", ...
     breakdown: dict[str, float] = field(default_factory=dict)
 
 
@@ -140,6 +140,65 @@ class Edge:
     ops: list[EdgeKind] = field(default_factory=list)   # every operation a rule found evidence for
                                                         # (KIND_PRIORITY order); `kind` is the one priced
                                                         # unless the scenario step says `op:`
+
+
+@dataclass
+class WorkflowStep:
+    """One state of an orchestrator's workflow (Step Functions ASL today), as the
+    step_functions rule records it on the orchestrator node — `attrs["workflow"]`
+    holds `to_dict()` of each top-level step, so graph.json keeps its shape.
+
+    type      Task | Map | Parallel | Choice | Wait
+    Task      target (node id or None), kind (edge kind value), resource (raw ARN)
+    Map       concurrency (MaxConcurrency or None), body (steps)
+    Parallel  branches (list of step lists)
+    Choice    choices (next-state name → step list)
+    Wait      seconds
+    """
+    type: str
+    state: str
+    target: str | None = None
+    kind: str | None = None
+    resource: str | None = None
+    concurrency: int | None = None
+    seconds: float | None = None
+    body: list[WorkflowStep] = field(default_factory=list)
+    branches: list[list[WorkflowStep]] = field(default_factory=list)
+    choices: dict[str, list[WorkflowStep]] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {"state": self.state, "type": self.type}
+        if self.type == "Task":
+            d.update(target=self.target, kind=self.kind, resource=self.resource)
+        elif self.type == "Map":
+            d.update(concurrency=self.concurrency, body=[s.to_dict() for s in self.body])
+        elif self.type == "Parallel":
+            d["branches"] = [[s.to_dict() for s in b] for b in self.branches]
+        elif self.type == "Choice":
+            d["branches"] = {name: [s.to_dict() for s in b] for name, b in self.choices.items()}
+        elif self.type == "Wait":
+            d["seconds"] = self.seconds
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> WorkflowStep:
+        kind = d.get("type", "")
+        raw_branches = d.get("branches") or ([] if kind == "Parallel" else {})
+        return cls(
+            type=kind, state=d.get("state", ""), target=d.get("target"), kind=d.get("kind"),
+            resource=d.get("resource"), concurrency=d.get("concurrency"), seconds=d.get("seconds"),
+            body=cls.from_dicts(d.get("body") or []),
+            branches=[cls.from_dicts(b) for b in raw_branches] if isinstance(raw_branches, list) else [],
+            choices={n: cls.from_dicts(b) for n, b in raw_branches.items()} if isinstance(raw_branches, dict) else {},
+        )
+
+    @classmethod
+    def from_dicts(cls, items: list[dict[str, Any]]) -> list[WorkflowStep]:
+        return [cls.from_dict(d) for d in items]
+
+    def sub_flows(self) -> list[list[WorkflowStep]]:
+        """Every nested step list (Map body, Parallel branches, Choice branches)."""
+        return [self.body, *self.branches, *self.choices.values()]
 
 
 @dataclass
@@ -282,6 +341,27 @@ class HopResult:
 
 
 @dataclass
+class LoadSummary:
+    """The `load` walker's users sweep for one scenario (M8). `to_dict()` is the
+    report.json `load` block; `resources` / `utilisation` / `thresholds` /
+    `assumptions` / `tail_factor` are the same on every scenario of a run."""
+    users: list[int]
+    traffic: bool = True                                   # does load.yaml send this scenario any traffic?
+    rps: dict[int, float] = field(default_factory=dict)    # users → arrivals per second
+    latency: dict[int, dict[str, Any]] = field(default_factory=dict)   # users → {expected_ms, p99_ms, saturated, …}
+    resources: dict[str, dict[str, Any]] = field(default_factory=dict)  # key → capacity.Resource.to_dict() + extras
+    utilisation: dict[int, dict[str, float | None]] = field(default_factory=dict)  # users → key → ρ (None = SAT)
+    thresholds: dict[str, float] = field(default_factory=dict)
+    assumptions: list[str] = field(default_factory=list)
+    tail_factor: float = 1.3
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"users": self.users, "rps": self.rps, "latency": self.latency, "traffic": self.traffic,
+                "resources": self.resources, "utilisation": self.utilisation, "thresholds": self.thresholds,
+                "assumptions": self.assumptions, "tail_factor": self.tail_factor}
+
+
+@dataclass
 class Result:
     scenario: str
     total_ms: float
@@ -293,10 +373,7 @@ class Result:
     # {"hop_count", "sequential_hops", "parallel_groups", "parallel_savings_ms", "fanout_copies", "wait_ms"}
     shape: dict[str, float] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
-    # Filled only by the `load` walker (M8): the users sweep for this scenario —
-    # {"users": [...], "rps": {U: λ}, "latency": {U: {"expected_ms", "p99_ms", "saturated"}},
-    #  "utilisation": {U: {resource: ρ}}, "resources": {resource: {...}}, "thresholds": {...}}
-    load: dict[str, Any] = field(default_factory=dict)
+    load: LoadSummary | None = None      # filled only by the `load` walker (M8)
 
 
 @dataclass
@@ -334,7 +411,7 @@ class Findings:
     warnings: list[str] = field(default_factory=list)
     percentiles: dict[str, float] = field(default_factory=dict)   # {"p50", "p90", "p95", "p99"} when sampled
     samples: int | None = None
-    load: dict[str, Any] = field(default_factory=dict)   # the `load` walker's sweep (see Result.load)
+    load: LoadSummary | None = None      # the `load` walker's sweep (see Result.load)
     schema_version: str = SCHEMA_VERSION
 
     def by_analyzer(self) -> dict[str, list[Finding]]:
@@ -358,164 +435,5 @@ class Findings:
             "hops": [asdict(h) | {"label": h.label} for h in self.hops],
             "findings": {name: [asdict(f) for f in items] for name, items in self.by_analyzer().items()},
             "warnings": self.warnings,
-            "load": self.load,
+            "load": self.load.to_dict() if self.load else {},
         }
-
-
-# ------------------------------------------------------------------ diff (M4)
-
-CHANGE_THRESHOLD_MS = 0.05               # below this a before/after pair counts as unchanged
-
-@dataclass
-class ValueDelta:
-    """One aligned line — a category, a node, or a total — before vs after.
-    `None` on a side means the subject only exists on the other side."""
-    subject: str
-    before_ms: float | None
-    after_ms: float | None
-    before_share: float | None = None
-    after_share: float | None = None
-    layer: str | None = None
-    detail: str = ""                     # the after-side detail (or before's if gone)
-
-    @property
-    def delta_ms(self) -> float:
-        return (self.after_ms or 0.0) - (self.before_ms or 0.0)
-
-    @property
-    def status(self) -> str:
-        if self.before_ms is None:
-            return "added"
-        if self.after_ms is None:
-            return "removed"
-        return "changed" if abs(self.delta_ms) >= CHANGE_THRESHOLD_MS else "unchanged"
-
-
-@dataclass
-class HopDelta:
-    """One aligned hop. Alignment key = hop label + occurrence index, so the
-    second call to the same table lines up with the second call, not the first."""
-    label: str
-    occurrence: int
-    index_before: int | None
-    index_after: int | None
-    before_ms: float | None
-    after_ms: float | None
-    breakdown_before: dict[str, float] = field(default_factory=dict)
-    breakdown_after: dict[str, float] = field(default_factory=dict)
-
-    @property
-    def delta_ms(self) -> float:
-        return (self.after_ms or 0.0) - (self.before_ms or 0.0)
-
-    @property
-    def status(self) -> str:
-        if self.before_ms is None:
-            return "added"
-        if self.after_ms is None:
-            return "removed"
-        return "changed" if abs(self.delta_ms) >= CHANGE_THRESHOLD_MS else "unchanged"
-
-    def breakdown_deltas(self) -> dict[str, tuple[float, float]]:
-        """{category: (before, after)} for every category present on either side."""
-        keys = list(dict.fromkeys([*self.breakdown_before, *self.breakdown_after]))
-        return {k: (self.breakdown_before.get(k, 0.0), self.breakdown_after.get(k, 0.0)) for k in keys}
-
-
-@dataclass
-class RecommendationDelta:
-    subject: str
-    status: str                          # "appeared" | "disappeared" | "unchanged"
-    saving_ms: float
-    detail: str
-
-
-@dataclass
-class ScenarioDiff:
-    name: str
-    status: str                          # "both" | "only_before" | "only_after"
-    before_ms: float | None
-    after_ms: float | None
-    description: str | None = None
-    categories: list[ValueDelta] = field(default_factory=list)
-    hops: list[HopDelta] = field(default_factory=list)
-    nodes: list[ValueDelta] = field(default_factory=list)
-    recommendations: list[RecommendationDelta] = field(default_factory=list)
-    shape_before: dict[str, float] = field(default_factory=dict)
-    shape_after: dict[str, float] = field(default_factory=dict)
-
-    @property
-    def delta_ms(self) -> float:
-        return (self.after_ms or 0.0) - (self.before_ms or 0.0)
-
-    @property
-    def delta_pct(self) -> float | None:
-        if not self.before_ms:
-            return None
-        return self.delta_ms / self.before_ms
-
-    def hops_with(self, status: str) -> list[HopDelta]:
-        return [h for h in self.hops if h.status == status]
-
-
-@dataclass
-class NodeMove:
-    node_id: str
-    field: str                           # "region" | "az" | "vpc"
-    before: str | None
-    after: str | None
-
-
-@dataclass
-class GraphDiff:
-    """Scenario-independent changes: what was added, removed, or moved."""
-    nodes_added: list[str] = field(default_factory=list)
-    nodes_removed: list[str] = field(default_factory=list)
-    nodes_moved: list[NodeMove] = field(default_factory=list)
-    edges_added: list[str] = field(default_factory=list)     # "src → dst (kind)"
-    edges_removed: list[str] = field(default_factory=list)
-
-    @property
-    def is_empty(self) -> bool:
-        return not (self.nodes_added or self.nodes_removed or self.nodes_moved
-                    or self.edges_added or self.edges_removed)
-
-
-@dataclass
-class DiffReport:
-    before: str                          # path or label of the before snapshot
-    after: str
-    profile_sources: list[str]
-    graph: GraphDiff
-    scenarios: list[ScenarioDiff]
-    schema_version: str = SCHEMA_VERSION
-
-    @property
-    def is_empty(self) -> bool:
-        return self.graph.is_empty and all(
-            s.status == "both" and abs(s.delta_ms) < CHANGE_THRESHOLD_MS for s in self.scenarios
-        )
-
-    def regressions(self, threshold: tuple[str, float]) -> list[ScenarioDiff]:
-        """Scenarios whose total grew by more than `threshold` = ("ms", 50) or ("percent", 10)."""
-        unit, limit = threshold
-        out = []
-        for s in self.scenarios:
-            if s.status != "both":
-                continue
-            grew = s.delta_ms if unit == "ms" else (s.delta_pct or 0.0) * 100
-            if grew > limit:
-                out.append(s)
-        return out
-
-    def to_dict(self) -> dict[str, Any]:
-        d = asdict(self)
-        for s, sd in zip(self.scenarios, d["scenarios"], strict=True):
-            sd["delta_ms"] = s.delta_ms
-            sd["delta_pct"] = s.delta_pct
-            for h, hd in zip(s.hops, sd["hops"], strict=True):
-                hd["status"], hd["delta_ms"] = h.status, h.delta_ms
-            for v, vd in zip([*s.categories, *s.nodes], [*sd["categories"], *sd["nodes"]], strict=True):
-                vd["status"], vd["delta_ms"] = v.status, v.delta_ms
-        return d
-

@@ -45,7 +45,7 @@ from pathlib import Path
 from typing import Any
 
 from iacsim.core.interfaces import WALKERS, Walker
-from iacsim.core.models import InfraGraph, NodeKind, Profile, Result, Scenario
+from iacsim.core.models import InfraGraph, LoadSummary, NodeKind, Profile, Result, Scenario
 from iacsim.simulator.capacity import Resource, Wait, queue_wait, resource_of, resources_for
 from iacsim.simulator.load import LoadProfile, LoadProfileError, load_profile
 from iacsim.simulator.traversal import (
@@ -94,12 +94,14 @@ class LoadWalker(Walker):
         base = self._sweep["planned"][scenario.name]
         backend = ExpectedBackend()
         result = build_result(base.plan, base.base, backend, walker="load")
-        result.load = self._sweep["per_scenario"].get(scenario.name, {"users": self._sweep["users"], "traffic": False})
-        result.load["resources"] = self._sweep["resources"]
-        result.load["utilisation"] = self._sweep["utilisation"]
-        result.load["thresholds"] = self._sweep["thresholds"]
-        result.load["assumptions"] = self._sweep["assumptions"]
-        result.load["tail_factor"] = self._sweep["tail_factor"]
+        own = self._sweep["per_scenario"].get(scenario.name, {"traffic": False})
+        result.load = LoadSummary(
+            users=self._sweep["users"], traffic=own.get("traffic", False),
+            rps=own.get("rps", {}), latency=own.get("latency", {}),
+            resources=self._sweep["resources"], utilisation=self._sweep["utilisation"],
+            thresholds=self._sweep["thresholds"], assumptions=self._sweep["assumptions"],
+            tail_factor=self._sweep["tail_factor"],
+        )
         return result
 
     # ------------------------------------------------------------ the sweep

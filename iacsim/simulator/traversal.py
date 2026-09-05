@@ -69,6 +69,7 @@ from iacsim.core.models import (
     Result,
     Scenario,
     Step,
+    WorkflowStep,
 )
 
 SYNCHRONOUS = {EdgeKind.INVOKE, EdgeKind.READ, EdgeKind.WRITE, EdgeKind.ROUTE}
@@ -191,7 +192,7 @@ class Planner:
             node = self.graph.nodes.get(node_id)
             if node is None or node.kind != "orchestrator":
                 continue
-            workflow = node.attrs.get("workflow") or []
+            workflow = WorkflowStep.from_dicts(node.attrs.get("workflow") or [])
             found = sorted({c for c in _enclosing_map_concurrencies(workflow, dst, None) if c})
             if len(found) > 1:
                 self.warnings.append(
@@ -201,8 +202,8 @@ class Planner:
             if found:
                 return found[-1]
             for item in workflow:
-                if item.get("type") == "Map" and item.get("concurrency"):
-                    return int(item["concurrency"])
+                if item.type == "Map" and item.concurrency:
+                    return int(item.concurrency)
             return None
         return None
 
@@ -323,23 +324,19 @@ def _last_hop(items: list[PlanItem]) -> PlannedHop | None:
     return None
 
 
-def _enclosing_map_concurrencies(items: list[dict], dst: str, innermost: int | None) -> list[int | None]:
+def _enclosing_map_concurrencies(items: list[WorkflowStep], dst: str, innermost: int | None) -> list[int | None]:
     """For every Task targeting `dst`, the concurrency of the innermost Map that
     encloses it (None when no Map does). Recurses through Map bodies, Parallel
-    branches (list) and Choice branches (dict)."""
+    branches and Choice branches."""
     out: list[int | None] = []
     for item in items:
-        kind = item.get("type")
-        if kind == "Task" and item.get("target") == dst:
+        if item.type == "Task" and item.target == dst:
             out.append(innermost)
-        elif kind == "Map":
-            inner = int(item["concurrency"]) if item.get("concurrency") else innermost
-            out += _enclosing_map_concurrencies(item.get("body") or [], dst, inner)
-        elif kind == "Parallel":
-            for branch in item.get("branches") or []:
-                out += _enclosing_map_concurrencies(branch, dst, innermost)
-        elif kind == "Choice":
-            for branch in (item.get("branches") or {}).values():
+        elif item.type == "Map":
+            inner = int(item.concurrency) if item.concurrency else innermost
+            out += _enclosing_map_concurrencies(item.body, dst, inner)
+        else:
+            for branch in item.sub_flows():
                 out += _enclosing_map_concurrencies(branch, dst, innermost)
     return out
 

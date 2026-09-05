@@ -1,7 +1,7 @@
 """Analyzer: what breaks first under load, at how many users, and what would
 raise the ceiling.                                                          [M8]
 
-Reads Result.load (the `load` walker's sweep). Silent for other walkers.
+Reads Result.load (the `load` walker's LoadSummary). Silent for other walkers.
 Findings, all `additive=False`, `latency_ms` = the users count the line is about:
 
   first_to_break   the resource with the lowest U at which ρ = 1, with why
@@ -32,10 +32,10 @@ MAX_RESOURCE_LINES = 6
 class SaturationAnalyzer(Analyzer):
     def analyse(self, result: Result, graph: InfraGraph) -> list[Finding]:
         load = result.load
-        if not load or not load.get("resources"):
+        if not load or not load.resources:
             return []
         self.graph, self.load = graph, load
-        self.users = list(load["users"])
+        self.users = list(load.users)
         self.limits = self._limits()
         out = self._first_to_break() + self._resource_lines() + self._scenario_p99(result) + self._ceilings()
         return out
@@ -44,9 +44,9 @@ class SaturationAnalyzer(Analyzer):
 
     def _limits(self) -> dict[str, tuple[float | None, float | None]]:
         """resource key → (users at threshold utilisation, users at ρ = 1); None if never inside 10× the sweep."""
-        threshold = float(self.load["thresholds"].get("utilisation", 0.8))
+        threshold = float(self.load.thresholds.get("utilisation", 0.8))
         u_max = self.users[-1]
-        util_at_max = self.load["utilisation"].get(u_max) or {}
+        util_at_max = self.load.utilisation.get(u_max) or {}
         limits = {}
         for key, rho in util_at_max.items():
             if rho is None:                              # no servers at all: broken at any load
@@ -64,7 +64,7 @@ class SaturationAnalyzer(Analyzer):
         if not candidates:
             return []
         u_break, key = min(candidates)
-        r = self.load["resources"][key]
+        r = self.load.resources[key]
         top = self._top_contributor(key)
         detail = (f"{r['label']} reaches 100% utilisation at ~{u_break:,.0f} users — "
                   f"{self._capacity_phrase(r)}; biggest load: {top}. Source: {r['source']}")
@@ -76,20 +76,20 @@ class SaturationAnalyzer(Analyzer):
         for key, (u_thr, u_one) in sorted(self.limits.items(), key=lambda kv: kv[1][1] or math.inf):
             if u_one is None or u_one > self.users[-1] * 10:
                 continue
-            r = self.load["resources"][key]
-            rho_max = self.load["utilisation"][self.users[-1]].get(key, 0.0)
+            r = self.load.resources[key]
+            rho_max = self.load.utilisation[self.users[-1]].get(key, 0.0)
             rho_text = f"{rho_max:.0%}" if rho_max is not None else "SAT (no servers)"
-            detail = (f"{self.load['thresholds'].get('utilisation', 0.8):.0%} at ~{u_thr:,.0f} users, "
+            detail = (f"{self.load.thresholds.get('utilisation', 0.8):.0%} at ~{u_thr:,.0f} users, "
                       f"100% at ~{u_one:,.0f}; {rho_text} at {self.users[-1]:,} users; {self._capacity_phrase(r)}")
             lines.append(Finding("saturation", f"resource:{r['label']}", round(u_one, 1), rho_max or 0.0, detail,
                                  refs=[key], layer="capacity", additive=False))
         return lines[:MAX_RESOURCE_LINES]
 
     def _scenario_p99(self, result: Result) -> list[Finding]:
-        lat = self.load.get("latency") or {}
-        if not lat or not self.load.get("traffic", True):
+        lat = self.load.latency
+        if not lat or not self.load.traffic:
             return []
-        limit = float(self.load["thresholds"].get("p99_ms", 2000))
+        limit = float(self.load.thresholds.get("p99_ms", 2000))
         for u in self.users:
             row = lat.get(u) or {}
             if row.get("saturated"):
@@ -112,12 +112,12 @@ class SaturationAnalyzer(Analyzer):
     def _ceilings(self) -> list[Finding]:
         out = []
         target = self.users[-1]
-        threshold = float(self.load["thresholds"].get("utilisation", 0.8))
+        threshold = float(self.load.thresholds.get("utilisation", 0.8))
         for key, (_, u_one) in sorted(self.limits.items(), key=lambda kv: kv[1][1] or math.inf):
             if u_one is None or u_one > target:
                 continue
-            r = self.load["resources"][key]
-            rho = self.load["utilisation"][target].get(key, 0.0)
+            r = self.load.resources[key]
+            rho = self.load.utilisation[target].get(key, 0.0)
             if rho is None:                              # throttled off: any positive capacity is the fix
                 out.append(Finding("saturation", "ceiling", float(target), 0.0,
                                    f"{r['label']} has no capacity at all ({r['source']}) — give it some",
@@ -165,7 +165,7 @@ class SaturationAnalyzer(Analyzer):
     # ------------------------------------------------------------ helpers
 
     def _top_contributor(self, key: str, with_share: bool = False):
-        r = self.load["resources"][key]
+        r = self.load.resources[key]
         by = r.get("by_scenario") or {}
         if not by:
             return None if with_share else "n/a"

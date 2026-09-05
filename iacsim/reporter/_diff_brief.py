@@ -19,8 +19,10 @@ markdown reporters need no new drawing code.
 
 from __future__ import annotations
 
-from iacsim.core.models import DiffReport, HopDelta, InfraGraph, ScenarioDiff, ValueDelta
+from iacsim.core.models import InfraGraph
+from iacsim.diff.models import DiffReport, HopDelta, ScenarioDiff, ValueDelta
 from iacsim.reporter._brief import Brief, Row, Section
+from iacsim.reporter._brief import shape_text as _shape_text
 
 TOP_NODES = 5
 
@@ -158,11 +160,4 @@ def breakdown_shift(h: HopDelta) -> str:
 
 
 def shape_text(shape: dict[str, float]) -> str:
-    if not shape:
-        return "—"
-    parts = [f"{int(shape.get('hop_count', 0))} hops"]
-    if shape.get("parallel_groups"):
-        parts.append(f"parallel saves {shape.get('parallel_savings_ms', 0):,.0f} ms")
-    if shape.get("wait_ms"):
-        parts.append(f"{shape['wait_ms']:,.0f} ms waits")
-    return ", ".join(parts)
+    return _shape_text(shape, style="diff")
