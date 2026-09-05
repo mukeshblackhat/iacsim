@@ -45,7 +45,7 @@ PERCENTILES = (50, 90, 95, 99)
 @WALKERS.register("monte_carlo")
 class MonteCarloWalker(Walker):
     def run(self, graph: InfraGraph, scenario: Scenario, **options: Any) -> Result:
-        plan = Planner(graph, options.get("price")).plan(scenario)
+        plan = Planner(graph, options.get("price"), options.get("profile")).plan(scenario)
         samples = int(options.get("samples") or DEFAULT_SAMPLES)
         sampler = make_sampler(samples, options.get("seed"))
         backend = MonteCarloBackend(graph, options.get("profile"), sampler)

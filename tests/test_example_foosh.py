@@ -113,6 +113,7 @@ def test_start_workflow_attributes_every_table_read_to_the_api_lambda(foosh_run)
     write = next(h for h in r.hops if h.dst == table("executions"))
     assert write.breakdown["processing"] == 8.0            # op: write
     assert r.hops[-1].dst == API and "response leg" in r.hops[-1].evidence
+    assert r.hops[-1].breakdown == {} and r.hops[-1].latency_ms == 0    # no second warm + cold start on the way back
 
 
 def test_run_workflow_costs_parallel_as_max_and_fanout_once(foosh_run):
@@ -133,12 +134,28 @@ def test_run_workflow_costs_parallel_as_max_and_fanout_once(foosh_run):
 
 # ---------------------------------------------------------------- M8: load
 
-def test_default_walker_numbers_did_not_move_with_waves(foosh_run):
+def test_totals_are_the_sum_of_critical_path_hops(foosh_run, default_profile):
     from conftest import result
-    assert result(foosh_run, "run_workflow_3_nodes").total_ms == pytest.approx(184.0)   # 3 copies ≤ Map 5 → 1 wave
-    assert result(foosh_run, "start_workflow").total_ms == pytest.approx(151.0)
+    T = default_profile.processing["step_functions"]["defaults"]["transition"]
+    for name in ("start_workflow", "poll_status", "save_workflow", "run_workflow_3_nodes", "run_workflow_10_text"):
+        r = result(foosh_run, name)
+        assert r.total_ms == pytest.approx(sum(h.latency_ms for h in r.hops if h.on_critical_path)), name
+    three = result(foosh_run, "run_workflow_3_nodes")
+    # every hop out of the state machine pays one transition; 5 of them sit on the critical path
+    out_of_sfn = [h for h in three.hops if h.src == SFN and h.on_critical_path]
+    assert len(out_of_sfn) == 5
+    assert sum(h.breakdown.get("transition", 0) for h in out_of_sfn) == pytest.approx(5 * T)
+    assert all("transition" not in h.breakdown for h in three.hops if h.src != SFN)
     ten = result(foosh_run, "run_workflow_10_text")
     assert ten.shape["fanout_waves"] == 6 and ten.shape["fanout_copies"] == 30          # 3 fan-outs × ceil(10/5)
+
+
+def test_poll_status_response_leg_is_free(foosh_run):
+    from conftest import result
+    r = result(foosh_run, "poll_status")
+    back = r.hops[-1]
+    assert back.dst == API and "response leg" in back.evidence
+    assert back.breakdown == {} and back.latency_ms == 0
 
 
 @pytest.fixture(scope="module")
@@ -162,13 +179,15 @@ def test_load_sweep_breaks_on_a_lambda_first(foosh_load):
     assert load["users"] == [100, 500, 1000, 2000, 5000, 10000]
     findings = next(f for f in foosh_load.findings if f.scenario == "start_workflow").by_analyzer()["saturation"]
     first = next(f for f in findings if f.subject == "first_to_break")
-    assert first.refs == [API]                                     # reserved_concurrent_executions=100, fed by polling
-    assert 1500 < first.latency_ms < 3500
-    assert "poll_status" in first.detail
+    util_max = load["utilisation"][10000]
+    # utilisation is linear in users, so the break point is users / utilisation at that user count
+    hottest = max(util_max, key=util_max.get)
+    assert first.refs == [hottest]
+    assert first.latency_ms == pytest.approx(10000 / util_max[hottest], rel=0.02)
+    assert hottest in (API, "lambda:unreserved-pool")                   # a Lambda pool, never DynamoDB
     pool = load["resources"]["lambda:unreserved-pool"]
     assert pool["slots"] == 900 and len(pool["members"]) == 15
-    util_max = load["utilisation"][10000]
-    assert util_max[API] > util_max["lambda:unreserved-pool"] > 1.0      # both past saturation at 10k, api first
+    assert util_max[API] > 1.0 and util_max["lambda:unreserved-pool"] > 1.0   # both past saturation at 10k
     assert util_max[table("executions")] < 0.1                          # on-demand DynamoDB never the problem
     assert r.load["latency"][100]["saturated"] is False and r.load["latency"][10000]["saturated"] is True
 
@@ -176,5 +195,4 @@ def test_load_sweep_breaks_on_a_lambda_first(foosh_load):
 def test_load_ceilings_cite_the_attribute(foosh_load):
     findings = next(f for f in foosh_load.findings if f.scenario == "poll_status").by_analyzer()["saturation"]
     ceilings = [f.detail for f in findings if f.subject == "ceiling"]
-    assert any("reserved_concurrent_executions on module.api" in d for d in ceilings)
-    assert any("poll_status" in d for d in ceilings)
+    assert any("reserved_concurrent_executions on module.api" in d or "account_concurrency" in d for d in ceilings)

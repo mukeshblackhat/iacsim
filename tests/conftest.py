@@ -72,3 +72,58 @@ def foosh_run():
 
 def result(output, scenario: str):
     return next(r for r in output.results if r.scenario == scenario)
+
+
+# ---------------------------------------------------------------- hand-built graph
+
+def tiny_graph(**overrides):
+    """A small costed-ready graph covering every hop shape the traversal handles:
+
+        internet → gw → fn → table            (READ)
+                        fn → sfn → w1 → table (orchestrator, workers)
+                             sfn → w2
+        lb → web → db                         (ROUTE, then READ)
+
+    All nodes are in us-east-1a unless overridden: `db_region="eu-west-1"`,
+    `placements={"fn": Placement()}` (unknown region), etc. WP8 migrates the
+    per-module `_graph()` builders onto this.
+    """
+    from iacsim.core.models import Confidence, Edge, EdgeKind, InfraGraph, Node, NodeKind, Placement
+
+    def place(region="us-east-1", az="us-east-1a"):
+        return Placement(region=region, az=az)
+
+    db_region = overrides.get("db_region", "us-east-1")
+    placements = overrides.get("placements", {})
+    nodes = [
+        Node("internet", NodeKind.EXTERNAL, "internet"),
+        Node("gw", NodeKind.GATEWAY, "api_gateway", place(az=None), label="gw"),
+        Node("fn", NodeKind.COMPUTE, "lambda", place(az=None), label="fn"),
+        Node("table", NodeKind.DATASTORE, "dynamodb", place(az=None), label="table"),
+        Node("sfn", NodeKind.ORCHESTRATOR, "step_functions", place(az=None), label="sfn"),
+        Node("w1", NodeKind.COMPUTE, "lambda", place(az=None), label="w1"),
+        Node("w2", NodeKind.COMPUTE, "lambda", place(az=None), label="w2"),
+        Node("lb", NodeKind.LB, "alb", place(az=None), label="lb"),
+        Node("web", NodeKind.COMPUTE, "ec2", place(), label="web"),
+        Node("db", NodeKind.DATASTORE, "rds", place(region=db_region, az=f"{db_region}a"), label="db"),
+    ]
+    g = InfraGraph()
+    for n in nodes:
+        if n.id in placements:
+            n.placement = placements[n.id]
+        g.add_node(n)
+    for src, dst, kind in [("internet", "gw", EdgeKind.INVOKE), ("internet", "lb", EdgeKind.INVOKE),
+                           ("gw", "fn", EdgeKind.INVOKE), ("fn", "table", EdgeKind.READ),
+                           ("fn", "sfn", EdgeKind.INVOKE), ("sfn", "w1", EdgeKind.INVOKE),
+                           ("sfn", "w2", EdgeKind.INVOKE), ("w1", "table", EdgeKind.READ),
+                           ("lb", "web", EdgeKind.ROUTE), ("web", "db", EdgeKind.READ)]:
+        g.add_edge(Edge(src, dst, kind, Confidence.HIGH, f"{src} calls {dst}"))
+    return g
+
+
+@pytest.fixture(scope="session")
+def default_profile():
+    """The built-in defaults.yaml as a Profile (rung 0)."""
+    from iacsim.core.config import Config
+    from iacsim.core.pipeline import load_profile
+    return load_profile(Config())

@@ -32,15 +32,18 @@ variance:
 # (later wins per key). `iacsim calibrate` fills per_resource and by_label;
 # hand edits are welcome in either. by_label works for Terraform and
 # CloudFormation graphs of the same stack; per_resource is bound to one format.
+# `respond` is what a compute node charges on the leg *back* to its caller. It
+# defaults to 0 because the forward hop's warm/handle already includes composing
+# the reply; raise it if your framework does real work on the way out.
 processing:
   lambda:
-    defaults: { warm: 5, cold: 400, cold_prob: 0.05 }
+    defaults: { warm: 5, cold: 400, cold_prob: 0.05, respond: 0 }   # respond: forward hop's warm already includes composing the reply
     per_resource: {}
   ec2:
-    defaults: { handle: 3 }
+    defaults: { handle: 3, respond: 0 }
     per_resource: {}
   fargate:
-    defaults: { handle: 3 }
+    defaults: { handle: 3, respond: 0 }
     per_resource: {}
   dynamodb:
     defaults: { read: 4, write: 8 }
@@ -64,7 +67,7 @@ processing:
     defaults: { route: 5 }
     per_resource: {}
   cloudfront:
-    defaults: { hit: 10, miss: 40 }
+    defaults: { hit: 10, miss: 40 }             # hit is unused: CDN hops are priced as a miss (worst case)
     per_resource: {}
   sqs:
     defaults: { publish: 10, consume: 100 }     # consume = typical poll delay
@@ -73,7 +76,7 @@ processing:
     defaults: { publish: 10, consume: 50 }
     per_resource: {}
   step_functions:
-    defaults: { transition: 25 }
+    defaults: { transition: 25 }                # charged on the hop into the state machine AND on every hop out of it
     per_resource: {}
 
 # Capacity — read only by the `load` walker (M8) to turn arrival rates into

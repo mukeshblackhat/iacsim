@@ -61,3 +61,16 @@ def test_page_load_walks_lb_web_db_db_and_back(classic_web_run):
         ("internet", LB), (LB, WEB_A), (WEB_A, DB), (WEB_A, DB), (DB, WEB_A)]
     assert r.warnings == []
     assert r.total_ms == pytest.approx(57.2)
+
+
+def test_page_load_hops_are_priced_by_the_contract(classic_web_run, default_profile):
+    """Forward ROUTE into EC2 charges its `handle`; the response leg back is free."""
+    from conftest import result
+    p = default_profile
+    r = result(classic_web_run, "page_load")
+    lb_to_web, back = r.hops[1], r.hops[-1]
+    # ALB spans AZs → same_region_unknown_az, doubled for a synchronous hop; ec2 has no `route` → handle
+    assert lb_to_web.breakdown == {"distance": 2 * p.distance["same_region_unknown_az"],
+                                   "processing": p.processing["ec2"]["defaults"]["handle"]}
+    assert back.breakdown == {} and back.latency_ms == 0
+    assert r.total_ms == pytest.approx(sum(h.latency_ms for h in r.hops))

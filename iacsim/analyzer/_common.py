@@ -10,6 +10,7 @@ LAYER_OF = {
     "distance": "A1",
     "processing": "A2",
     "cold_start": "A2",
+    "transition": "A2",
     "wait": "A3",
 }
 LAYER_NAMES = {"A1": "distance", "A2": "service", "A3": "shape"}

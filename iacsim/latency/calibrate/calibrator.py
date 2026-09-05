@@ -33,6 +33,11 @@ SUBTYPE_ORDER = ("lambda", "ec2", "fargate", "dynamodb", "rds", "elasticache", "
                  "api_gateway", "api_gateway_v2", "cloudfront", "sqs", "sns", "step_functions")
 
 
+# Default keys no metric source can measure — they stay in the block but are not
+# reported as "filled from defaults" (respond: the cost of a response leg, a modelling choice).
+NOT_MEASURABLE = ("respond",)
+
+
 @dataclass
 class CalibrationResult:
     profile: dict[str, Any]
@@ -64,7 +69,7 @@ def calibrate(graph: InfraGraph, source: MetricSource, window: str, *, fmt: str)
         _write_block(result.profile["processing"], node, block, unique_label=label_counts[node.label] == 1)
         result.covered.append(node.id)
         result.measured[node.id] = dict(measured)
-        result.filled[node.id] = [k for k in subtype_defaults if k not in measured]
+        result.filled[node.id] = [k for k in subtype_defaults if k not in measured and k not in NOT_MEASURABLE]
 
     _set_variance(result)
     result.meta = _meta(graph, source, window, fmt, result)

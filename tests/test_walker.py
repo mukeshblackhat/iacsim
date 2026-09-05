@@ -101,11 +101,11 @@ def test_op_override_uses_write_cost(costed):
     assert _hop(write, "fn", "table").breakdown["processing"] == 8.0
 
 
-def test_response_hop_back_to_caller_skips_network(costed):
+def test_response_hop_back_to_caller_costs_nothing_by_default(costed):
     r = _run(costed, [Step(node="fn"), Step(node="table"), Step(node="fn")])
     back = _hop(r, "table", "fn")
-    assert "distance" not in back.breakdown and back.breakdown["processing"] == 5.0
-    assert "response leg" in back.evidence
+    assert back.breakdown == {} and back.latency_ms == 0      # forward hop already paid network + processing
+    assert "response leg" in back.evidence and "already counted on the forward hop" in back.evidence
     assert r.warnings == []
 
 
@@ -124,5 +124,5 @@ def test_wait_step_is_pure_cost(costed):
 
 def test_unknown_hop_is_estimated_with_a_warning(costed):
     r = _run(costed, [Step(node="table2")])            # gw has no edge to table2
-    assert len(r.warnings) == 1 and "no inferred edge" in r.warnings[0]
-    assert _hop(r, "gw", "table2").latency_ms > 0
+    assert len(r.warnings) == 1 and "no inferred edge" in r.warnings[0] and "synthetic read" in r.warnings[0]
+    assert _hop(r, "gw", "table2").breakdown["processing"] == 4.0     # a datastore is read, not "invoked"

@@ -104,7 +104,7 @@ class LoadWalker(Walker):
         load = _load_from_options(options)
         tail_factor = float(options.get("tail_factor") or DEFAULT_TAIL_FACTOR)
 
-        planner = Planner(graph, options.get("price"))
+        planner = Planner(graph, options.get("price"), profile)
         planned = {s.name: self._plan(s, planner, graph) for s in scenarios}
         missing = [n for n in load.scenario_names() if n not in planned]
         if missing:
@@ -181,7 +181,7 @@ def _visits(base: Evaluation, graph: InfraGraph) -> list[_Visit]:
             lambda_span[hop.dst] += ms                     # its own invocation
             lambda_copies[hop.dst] += hop.copies
         elif dst_node is not None and dst_node.kind not in (NodeKind.NETWORK, NodeKind.EXTERNAL):
-            service = sum(v for k, v in e.cost.breakdown.items() if k != "distance")
+            service = sum(v for k, v in e.cost.breakdown.items() if k not in ("distance", "transition"))
             visits.append(_Visit(hop.dst, service / 1000.0, hop.copies))
         src_node = graph.nodes.get(hop.src)
         if src_node is not None and src_node.subtype == "lambda" and hop.dst != hop.src:

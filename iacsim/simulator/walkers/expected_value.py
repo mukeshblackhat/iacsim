@@ -20,6 +20,6 @@ from iacsim.simulator.traversal import ExpectedBackend, Planner, build_result, e
 @WALKERS.register("expected_value")
 class ExpectedValueWalker(Walker):
     def run(self, graph: InfraGraph, scenario: Scenario, **options: Any) -> Result:
-        plan = Planner(graph, options.get("price")).plan(scenario)
+        plan = Planner(graph, options.get("price"), options.get("profile")).plan(scenario)
         backend = ExpectedBackend()
         return build_result(plan, evaluate(plan, backend), backend, walker="expected_value")

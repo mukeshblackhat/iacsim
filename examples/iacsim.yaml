@@ -12,7 +12,7 @@ scenarios:
   file: scenarios.yaml
 latency:
   profiles: [defaults]          # add ./profiles/team.yaml, ./calibrated.yaml ...
-  rules: [distance, processing, cold_start]
+  rules: [distance, processing, cold_start, transition]   # transition = one state change per hop out of a state machine
 simulation:
   walker: expected_value        # or monte_carlo → p50/p95/p99
   samples: 10000                # monte_carlo only

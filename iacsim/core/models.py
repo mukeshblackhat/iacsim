@@ -70,6 +70,16 @@ class EdgeKind(StrEnum):
     PEER = "peer"          # vpc ↔ vpc
 
 
+# What kind of call a hop into a node most likely is when nothing in the IaC says
+# otherwise — used by the env_var rule and for synthetic (estimated) hops.
+DEFAULT_KIND_FOR_TARGET: dict[NodeKind, EdgeKind] = {
+    NodeKind.DATASTORE: EdgeKind.READ,
+    NodeKind.QUEUE: EdgeKind.PUBLISH,
+    NodeKind.ORCHESTRATOR: EdgeKind.INVOKE,
+    NodeKind.COMPUTE: EdgeKind.INVOKE,
+}
+
+
 class Confidence(StrEnum):
     DECLARED = "declared"  # from scenarios.yaml — always trusted
     HIGH = "high"

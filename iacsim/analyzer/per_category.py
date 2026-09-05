@@ -4,8 +4,9 @@ Additive lines (shares sum to 100 % of the scenario total):
     distance      A1  network between placements
     processing    A2  time inside the destination service
     cold_start    A2  Lambda cold-start expectation
+    transition    A2  Step Functions state transitions (one per hop out of a state machine)
     wait          A3  deliberate Step Functions Wait states
-    service       A2  roll-up of processing + cold_start   (additive=False so it is
+    service       A2  roll-up of processing + cold_start + transition   (additive=False so it is
                       not double-counted; share is still meaningful)
 
 Informational shape lines (additive=False, share=0):
@@ -42,10 +43,10 @@ class PerCategoryAnalyzer(Analyzer):
         findings = [self._line(cat, ms, refs[cat], hops) for cat, ms in by_cat.items()]
         findings.sort(key=lambda f: -f.latency_ms)
 
-        service = by_cat.get("processing", 0.0) + by_cat.get("cold_start", 0.0)
+        service = by_cat.get("processing", 0.0) + by_cat.get("cold_start", 0.0) + by_cat.get("transition", 0.0)
         if service:
             findings.append(Finding("per_category", "service", round(service, 3), service / self.total,
-                                    "processing + cold_start (roll-up of the A2 lines above)",
+                                    "processing + cold_start + transition (roll-up of the A2 lines above)",
                                     layer="A2", additive=False))
         findings += self._shape_lines(result)
         return findings
@@ -58,6 +59,8 @@ class PerCategoryAnalyzer(Analyzer):
             "processing": self._processing_detail,
             "cold_start": self._cold_start_detail,
             "wait": lambda hs: f"{len(hs)} Wait state(s) — deliberate pauses in the state machine",
+            "transition": lambda hs: (f"{len(hs)} state transition(s) — every hop out of a state machine pays "
+                                      f"processing.step_functions.transition; fewer, larger states cut this"),
         }.get(cat, lambda hs: f"summed across {len(hs)} hops")
         relevant = [h for h in hops if cat in h.breakdown]
         return Finding("per_category", cat, round(ms, 3), ms / self.total, detail(relevant),

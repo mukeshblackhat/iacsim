@@ -16,14 +16,16 @@ Both walkers share one traversal so they cannot drift apart:
 Edge selection for one hop  (src → dst), in order:
   a. a real edge current → dst                                     ("direct")
   b. dst is a node the request has already been at: the response leg back to a
-     caller. Network was already charged by the forward hop's ×2, so only the
-     destination's processing counts                                 ("response")
+     caller. Network was charged by the forward hop's ×2 and the forward hop's
+     processing (warm / handle) already includes composing the reply, so a
+     response leg costs only the profile's optional `respond` key, default 0
+                                                                    ("response")
   c. a real edge caller → dst for the most recent earlier node on the path that
      has one — the request *returned* to that caller first. Covers "api Lambda
      reads table A, then table B" and Step Functions, where the state machine
      invokes every worker                                          ("via caller")
-  d. nothing: a synthetic INVOKE edge priced by the same cost rules, plus a
-     warning                                                        ("estimated")
+  d. nothing: a synthetic edge (READ into a datastore, PUBLISH into a queue,
+     INVOKE otherwise) priced by the same cost rules, plus a warning ("estimated")
 In case (c) the hop is recorded from the caller, so attribution is right.
 
 `distance` is one-way (latency/rules/distance.py), so it is doubled for
@@ -49,12 +51,14 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
 from iacsim.core.models import (
+    DEFAULT_KIND_FOR_TARGET,
     Confidence,
     Edge,
     EdgeKind,
     HopResult,
     InfraGraph,
     Latency,
+    Profile,
     Result,
     Scenario,
     Step,
@@ -109,8 +113,8 @@ class _Walk:
 
 
 class Planner:
-    def __init__(self, graph: InfraGraph, price: Pricer | None) -> None:
-        self.graph, self.price = graph, price
+    def __init__(self, graph: InfraGraph, price: Pricer | None, profile: Profile | None = None) -> None:
+        self.graph, self.price, self.profile = graph, price, profile
 
     def plan(self, scenario: Scenario) -> Plan:
         self.warnings: list[str] = []
@@ -203,7 +207,7 @@ class Planner:
         if step.note:
             evidence = f"{evidence}; {step.note}"
 
-        walk.items.append(PlannedHop(src=src, dst=dst, breakdown=self._charge(edge, mode), evidence=evidence))
+        walk.items.append(PlannedHop(src=src, dst=dst, breakdown=self._charge(edge, mode, dst), evidence=evidence))
         walk.current = dst
         walk.visited.append(dst)
 
@@ -216,11 +220,16 @@ class Planner:
         for caller in reversed(visited):
             if caller != src and (edge := g.find_edge(caller, dst)) is not None:
                 return edge, "via caller"
-        self.warnings.append(f"no inferred edge {src} → {dst}; hop priced as a synthetic invoke")
-        return self._synthetic(src, dst, "no inferred edge — estimated"), "estimated"
+        kind = self._synthetic_kind(dst)
+        self.warnings.append(f"no inferred edge {src} → {dst}; hop priced as a synthetic {kind.value}")
+        return self._synthetic(src, dst, "no inferred edge — estimated", kind), "estimated"
 
-    def _synthetic(self, src: str, dst: str, why: str) -> Edge:
-        edge = Edge(src=src, dst=dst, kind=EdgeKind.INVOKE, confidence=Confidence.LOW, evidence=why)
+    def _synthetic_kind(self, dst: str) -> EdgeKind:
+        node = self.graph.nodes.get(dst)
+        return DEFAULT_KIND_FOR_TARGET.get(node.kind, EdgeKind.INVOKE) if node else EdgeKind.INVOKE
+
+    def _synthetic(self, src: str, dst: str, why: str, kind: EdgeKind = EdgeKind.INVOKE) -> Edge:
+        edge = Edge(src=src, dst=dst, kind=kind, confidence=Confidence.LOW, evidence=why)
         edge.latency = self.price(edge) if self.price else Latency(expected=0.0)
         return edge
 
@@ -232,22 +241,32 @@ class Planner:
         repriced.latency = self.price(repriced) if self.price else edge.latency
         return repriced
 
-    @staticmethod
-    def _charge(edge: Edge, mode: str) -> dict[str, float]:
+    def _charge(self, edge: Edge, mode: str, dst: str) -> dict[str, float]:
         """Turn an edge's one-way breakdown into what this hop costs."""
-        breakdown = dict(edge.latency.breakdown if edge.latency else {})
         if mode == "response":
-            breakdown.pop("distance", None)          # already paid by the forward hop's ×2
-        elif edge.kind in SYNCHRONOUS and "distance" in breakdown:
+            respond = self._respond(dst)             # network and processing were paid on the forward hop
+            return {"processing": round(respond, 3)} if respond else {}
+        breakdown = dict(edge.latency.breakdown if edge.latency else {})
+        if edge.kind in SYNCHRONOUS and "distance" in breakdown:
             breakdown["distance"] *= 2               # request + response
         return {k: round(v, 3) for k, v in breakdown.items()}
+
+    def _respond(self, dst: str) -> float:
+        """processing.<subtype>.respond for the node the request returns to (default 0)."""
+        node = self.graph.nodes.get(dst)
+        if node is None or self.profile is None:
+            return 0.0
+        return float(self.profile.processing_for(node).get("respond") or 0.0)
 
     def _evidence(self, edge: Edge, mode: str, src: str) -> str:
         name = self.graph.display_name
         if mode == "via caller":
             return f"after returning from {name(src)} — {edge.evidence}"
         if mode == "response":
-            return f"response leg (network counted on the forward hop); {name(edge.dst)} handles the reply"
+            node = self.graph.nodes.get(edge.dst)
+            subtype = node.subtype if node else "?"
+            return (f"response leg — network and processing already counted on the forward hop into "
+                    f"{name(edge.dst)}; respond={self._respond(edge.dst):g} (processing.{subtype}.respond)")
         return edge.evidence
 
 

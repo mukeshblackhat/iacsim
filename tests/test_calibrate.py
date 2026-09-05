@@ -87,7 +87,7 @@ def test_calibrator_writes_complete_blocks_by_id_and_label_and_reports_skips():
     src = _source(lambda_={"my-fn": {"warm": 12}}, dynamodb={"orders": {"read": 2.5, "write": 4}})
     result = calibrate(_graph(), src, "7d", fmt="terraform")
     lam = result.profile["processing"]["lambda"]
-    assert lam["by_label"]["my-fn"] == {"warm": 12, "cold": 400, "cold_prob": 0.05}   # complete block
+    assert lam["by_label"]["my-fn"] == {"warm": 12, "cold": 400, "cold_prob": 0.05, "respond": 0}   # complete block
     assert "per_resource" not in lam                                                  # unique label → by_label only
     assert result.filled["fn"] == ["cold", "cold_prob"] and result.filled["tbl"] == []
     assert result.profile["processing"]["dynamodb"]["by_label"]["orders"] == {"read": 2.5, "write": 4}
@@ -157,7 +157,7 @@ def test_processing_for_precedence_defaults_then_label_then_id():
               ("cal", {"processing": {"lambda": {"by_label": {"my-fn": {"warm": 20, "cold": 900}},
                                                  "per_resource": {"fn": {"warm": 30}}}}})]
     block = merge_profiles(layers).processing_for(node)
-    assert block == {"warm": 30, "cold": 900, "cold_prob": 0.05}
+    assert block == {"warm": 30, "cold": 900, "cold_prob": 0.05, "respond": 0}
     unlabelled = Node("fn", NodeKind.COMPUTE, "lambda", Placement())
     assert merge_profiles(layers).processing_for(unlabelled)["warm"] == 30
     assert merge_profiles(layers).processing_for(Node("other", NodeKind.COMPUTE, "lambda", Placement()))["warm"] == 5

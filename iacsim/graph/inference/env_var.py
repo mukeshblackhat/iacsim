@@ -16,16 +16,18 @@ from __future__ import annotations
 from typing import Any
 
 from iacsim.core.interfaces import INFERENCE_RULES, InferenceRule
-from iacsim.core.models import Confidence, Edge, EdgeKind, InfraGraph, NodeKind, RawResources
+from iacsim.core.models import (
+    DEFAULT_KIND_FOR_TARGET,
+    Confidence,
+    Edge,
+    InfraGraph,
+    NodeKind,
+    RawResources,
+)
 from iacsim.core.refs import references_in
 from iacsim.graph.inference._common import raw_by_address, short
 
-KIND_FOR_TARGET = {
-    NodeKind.DATASTORE: EdgeKind.READ,
-    NodeKind.QUEUE: EdgeKind.PUBLISH,
-    NodeKind.ORCHESTRATOR: EdgeKind.INVOKE,
-    NodeKind.COMPUTE: EdgeKind.INVOKE,
-}
+KIND_FOR_TARGET = DEFAULT_KIND_FOR_TARGET      # one table, shared with synthetic hops in the traversal
 
 CONFIG_ATTRS = ("environment", "user_data", "user_data_base64", "container_definitions")
 

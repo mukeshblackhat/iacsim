@@ -36,7 +36,7 @@ DEFAULTS: dict[str, Any] = {
     },
     "latency": {
         "profiles": ["defaults"],
-        "rules": ["distance", "processing", "cold_start"],
+        "rules": ["distance", "processing", "cold_start", "transition"],
     },
     "simulation": {
         "walker": "expected_value",
