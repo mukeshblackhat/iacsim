@@ -231,6 +231,9 @@ class Planner:
             edge = self._reprice(edge, OP_TO_KIND[step.op])
 
         evidence = self._evidence(edge, mode, came_from)
+        if not step.op and len(edge.ops) > 1:          # more than one operation had evidence
+            others = ", ".join(o.value for o in edge.ops if o != edge.kind)
+            evidence = f"{evidence} (also may {others}: use op: {others})"
         if suffix:
             evidence = f"{evidence}; {suffix}"
         if step.note:

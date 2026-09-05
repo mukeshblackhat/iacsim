@@ -1,0 +1,18 @@
+# Two halves of one order: the synchronous request the user waits for, and the
+# asynchronous processing that follows.
+
+place_order:
+  description: "POST /orders — api validates, publishes to SQS, returns 202"
+  entry: aws_api_gateway_rest_api.main
+  steps:
+    - module.api.aws_lambda_function.this
+    - aws_sqs_queue.orders                         # publish (one-way)
+    - module.api.aws_lambda_function.this          # respond 202
+
+process_order:
+  description: "worker polls the queue and writes the order"
+  entry: aws_sqs_queue.orders
+  steps:
+    - module.worker.aws_lambda_function.this       # consume (event source mapping)
+    - node: module.orders.aws_dynamodb_table.this
+      op: write

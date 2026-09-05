@@ -87,6 +87,17 @@ class Confidence(StrEnum):
     LOW = "low"
 
 
+# Most-trusted first, so `max(confidences, key=CONFIDENCE_ORDER.index)` reads naturally.
+CONFIDENCE_ORDER = [Confidence.DECLARED, Confidence.HIGH, Confidence.MEDIUM, Confidence.LOW]
+
+# When two rules find evidence for the same (src, dst) pair with different
+# operations, the edge is priced as the first of these that any rule found —
+# a request path *reads* by default; a scenario step says `op: write` when it
+# doesn't. Every operation found is kept in `Edge.ops`.
+KIND_PRIORITY = [EdgeKind.INVOKE, EdgeKind.ROUTE, EdgeKind.CONSUME, EdgeKind.PUBLISH,
+                 EdgeKind.READ, EdgeKind.WRITE, EdgeKind.PEER]
+
+
 @dataclass
 class Placement:
     region: str | None = None
@@ -124,8 +135,11 @@ class Edge:
     kind: EdgeKind
     confidence: Confidence
     evidence: str                        # human sentence: why we believe this hop exists
-    rule: str | None = None              # registry name of the inference rule
+    rule: str | None = None              # registry name(s) of the inference rule(s), "a+b" when merged
     latency: Latency | None = None       # filled by latency rules
+    ops: list[EdgeKind] = field(default_factory=list)   # every operation a rule found evidence for
+                                                        # (KIND_PRIORITY order); `kind` is the one priced
+                                                        # unless the scenario step says `op:`
 
 
 @dataclass

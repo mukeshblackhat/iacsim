@@ -15,11 +15,20 @@ resource "aws_iam_role_policy" "sfn_invoke" {
   role = aws_iam_role.sfn.id
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = ["lambda:InvokeFunction"]
-      Resource = [for w in module.worker : w.arn]
-    }]
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["lambda:InvokeFunction"]
+        Resource = [for w in module.worker : w.arn]
+      },
+      {
+        # StepFunctionsOrchestratorUnified: workflows_table / executions_table
+        # .grant_read_write_data(state machine role)
+        Effect   = "Allow"
+        Action   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Query"]
+        Resource = [module.table["workflows"].arn, module.table["executions"].arn]
+      },
+    ]
   })
 }
 

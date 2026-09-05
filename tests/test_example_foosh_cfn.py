@@ -14,26 +14,23 @@ from iacsim.differ import diff_graphs
 
 EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 
-# M6 aligned the twin's four resource names with config/environments/staging.json,
-# so labels now match one-to-one. Kept as a (now empty) map so the edge tests
-# below read the same way if a future rename reopens a gap.
-LABEL_GAP: dict[str, str] = {}
-# The twin gives every Lambda env vars for all ten tables; the real stack only
-# passes seven (+ USER_CREDITS, which has no table) and reaches the other
-# three through IAM alone. Same edge, different evidence → different kind.
-IAM_ONLY_TABLES = {"PaymentIdempotencyStaging", "PublishedAppsStaging", "AppExecutionsStaging"}
-# The twin's ASL (step_functions/workflow.asl.json) is a hand-condensed version
-# of the real 200 KB definition. It treats the input nodes as Pass states and
-# gives lipsync / image-to-image their own Task states; the real definition
-# does the opposite. Both machines still reach all 15 workers (the leftovers
-# come through the state machine role's lambda:InvokeFunction grant).
+# M6 aligned the twin's resource names with config/environments/staging.json; WP2
+# aligned the env vars (seven tables exported, three IAM-only) and the state
+# machine role (read/write on workflows + executions), and made edge kinds
+# independent of which rule found them. The only remaining difference is the
+# hand-condensed ASL: the twin gives lipsync / image-to-image their own Task
+# states and treats the input nodes as Pass states; the real definition does
+# the opposite. Both machines still reach all 15 workers (the leftovers come
+# through the role's lambda:InvokeFunction grant), so the *edge sets* are equal —
+# only the rule that produced four of them differs.
 SM = "AsyncWorkflowStagingStateMachine"
 SFN_TASKS_ONLY_IN_TWIN = {"async-workflow-lipsync-processing-staging", "async-workflow-image-to-image-staging"}
 SFN_TASKS_ONLY_IN_REAL = {"async-workflow-image-input-staging", "async-workflow-text-input-staging"}
-# The real state machine role may also write the workflows / executions tables
-# (CDK grant_read_write_data); the twin's role only invokes Lambdas.
-SFN_TABLES_ONLY_IN_REAL = {"AsyncWorkflowsStaging", "WorkflowExecutionsStagingSF"}
 HIGH_CONFIDENCE_RULES = {"normaliser", "lambda_permission", "api_gateway_integration", "step_functions"}
+
+
+def rules(e) -> set[str]:
+    return set((e.rule or "").split("+"))
 
 
 def labels(graph):
@@ -59,39 +56,36 @@ def test_node_diff_by_label_is_empty(foosh, foosh_cfn):
 
 
 def test_high_confidence_edges_match_exactly(foosh, foosh_cfn):
-    """Entry points, API → Lambda, and every Step Functions Task edge agree once
-    the four renamed resources are mapped onto each other."""
+    """Entry points, API → Lambda, and every Step Functions Task edge agree,
+    except the four Task-vs-Pass differences of the condensed ASL."""
     tf, cfn = foosh[0], foosh_cfn[0]
     tl, cl = labels(tf), labels(cfn)
-    rename = lambda label: LABEL_GAP.get(label, label)
-    tf_edges = {(rename(tl[e.src]), rename(tl[e.dst]), e.kind) for e in tf.edges if e.rule in HIGH_CONFIDENCE_RULES}
-    cfn_edges = {(cl[e.src], cl[e.dst], e.kind) for e in cfn.edges if e.rule in HIGH_CONFIDENCE_RULES}
+    high = lambda e: rules(e) & HIGH_CONFIDENCE_RULES
+    tf_edges = {(tl[e.src], tl[e.dst], e.kind) for e in tf.edges if high(e)}
+    cfn_edges = {(cl[e.src], cl[e.dst], e.kind) for e in cfn.edges if high(e)}
     assert tf_edges - cfn_edges == {(SM, x, EdgeKind.INVOKE) for x in SFN_TASKS_ONLY_IN_TWIN}
     assert cfn_edges - tf_edges == {(SM, x, EdgeKind.INVOKE) for x in SFN_TASKS_ONLY_IN_REAL}
     assert len(cfn_edges) == 14                               # internet→api, api gw→api lambda, sfn→12 workers
 
 
-def test_all_edges_match_except_the_documented_evidence_gap(foosh, foosh_cfn):
+def test_every_edge_matches_kind_and_ops(foosh, foosh_cfn):
+    """The hand-written Terraform twin and the real cdk synth template produce
+    the same edges with the same priced kind and the same set of operations —
+    zero differences (WP2)."""
     tf, cfn = foosh[0], foosh_cfn[0]
     tl, cl = labels(tf), labels(cfn)
-    rename = lambda label: LABEL_GAP.get(label, label)
-    tf_edges = {(rename(tl[e.src]), rename(tl[e.dst]), e.kind) for e in tf.edges}
-    cfn_edges = {(cl[e.src], cl[e.dst], e.kind) for e in cfn.edges}
-
-    only_tf = tf_edges - cfn_edges
-    only_cfn = cfn_edges - tf_edges
-    sfn_extra = {(SM, t, EdgeKind.WRITE) for t in SFN_TABLES_ONLY_IN_REAL}
-    assert sfn_extra <= only_cfn
-    only_cfn -= sfn_extra
-
-    # 16 matched Lambdas × 3 IAM-only tables: env_var READ in the twin, iam_policy WRITE in reality
-    assert {(s, d) for s, d, _ in only_tf} == {(s, d) for s, d, _ in only_cfn}
-    assert all(k == EdgeKind.READ and d in IAM_ONLY_TABLES for _, d, k in only_tf)
-    assert all(k == EdgeKind.WRITE and d in IAM_ONLY_TABLES for _, d, k in only_cfn)
-    assert len(only_tf) == 16 * 3
-
-    # Everything else — 146 edges — is identical.
-    assert len(tf_edges & cfn_edges) == len(tf_edges) - 48
+    tf_edges = {(tl[e.src], tl[e.dst], e.kind, tuple(e.ops)) for e in tf.edges}
+    cfn_edges = {(cl[e.src], cl[e.dst], e.kind, tuple(e.ops)) for e in cfn.edges}
+    assert tf_edges == cfn_edges
+    assert len(tf_edges) == len(tf.edges) == len(cfn.edges)   # no duplicate pairs on either side
+    # the three IAM-only tables are reached by every Lambda through the grant alone
+    api = "async-workflow-api-staging"
+    for t in ("PaymentIdempotencyStaging", "PublishedAppsStaging", "AppExecutionsStaging"):
+        for g, lab in ((tf, tl), (cfn, cl)):
+            e = next(x for x in g.edges if lab[x.src] == api and lab[x.dst] == t)
+            assert e.kind == EdgeKind.READ and e.ops == [EdgeKind.READ, EdgeKind.WRITE] and rules(e) == {"iam_policy"}
+    diff = diff_graphs(tf, cfn, align_by="label")
+    assert diff.edges_added == [] and diff.edges_removed == []
 
 
 def test_step_functions_workflow_replays_from_the_real_definition(foosh_cfn):
@@ -101,7 +95,7 @@ def test_step_functions_workflow_replays_from_the_real_definition(foosh_cfn):
     assert workflow[0]["type"] == "Task" and workflow[0]["state"] == "ParseWorkflowStaging"
     kinds = [w["type"] for w in workflow]
     assert "Choice" in kinds                                  # ExecutionModeChoice → Map branches
-    targets = {e.dst for e in graph.edges if e.src == sm.id and e.rule == "step_functions"}
+    targets = {e.dst for e in graph.edges if e.src == sm.id and "step_functions" in rules(e)}
     assert len(targets) == 12
 
 

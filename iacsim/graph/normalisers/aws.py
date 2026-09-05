@@ -44,6 +44,7 @@ TYPE_MAP: dict[str, tuple[NodeKind, str]] = {
     "AWS::EC2::Instance":             (NodeKind.COMPUTE, "ec2"),
     "aws_ecs_service":                (NodeKind.COMPUTE, "fargate"),
     "AWS::ECS::Service":              (NodeKind.COMPUTE, "fargate"),
+    "aws_autoscaling_group":          (NodeKind.COMPUTE, "ec2"),     # N instances, see _capacity_attrs
     # datastores
     "aws_dynamodb_table":             (NodeKind.DATASTORE, "dynamodb"),
     "AWS::DynamoDB::Table":           (NodeKind.DATASTORE, "dynamodb"),
@@ -96,12 +97,14 @@ IGNORED_PREFIXES = (
     "aws_cloudwatch_", "AWS::Logs::", "AWS::CDK::", "aws_cdk_",
     "aws_sqs_queue_policy", "aws_sns_topic_subscription", "aws_sns_topic_policy",
     "aws_ecs_cluster", "aws_ecs_task_definition",
+    "aws_autoscaling_attachment", "aws_autoscaling_policy", "aws_launch_template", "aws_launch_configuration",
 )
 
 # Attributes worth keeping on the node (what latency rules and reports might use).
 KEEP_ATTRS = ("memory_size", "timeout", "runtime", "engine", "engine_version", "instance_class",
               "instance_type", "billing_mode", "reserved_concurrent_executions", "load_balancer_type",
-              "node_type", "type", "desired_count", "read_capacity", "write_capacity")
+              "node_type", "type", "desired_count", "read_capacity", "write_capacity",
+              "desired_capacity", "min_size", "max_size")
 
 ENTRY_KINDS = (NodeKind.GATEWAY, NodeKind.LB, NodeKind.CDN)
 INTERNET = "internet"
@@ -156,7 +159,14 @@ def _capacity_attrs(subtype: str, attrs: dict[str, Any]) -> dict[str, Any]:
         if isinstance(reserved, int) and reserved >= 0:
             out["concurrency"] = reserved
     elif subtype == "ec2":
-        out["instances"] = 1
+        # a single aws_instance is one server; an aws_autoscaling_group is
+        # desired_capacity (or min_size) of them
+        for key in ("desired_capacity", "min_size"):
+            if isinstance(attrs.get(key), int) and attrs[key] > 0:
+                out["instances"] = attrs[key]
+                break
+        else:
+            out["instances"] = 1
     elif subtype == "fargate" and isinstance(attrs.get("desired_count"), int):
         out["instances"] = attrs["desired_count"]
     return out
@@ -170,7 +180,7 @@ def _placement(r: RawResource, by_address: dict[str, RawResource]) -> Placement:
     subnet = _first_address(r.attrs.get("subnet_id"))
     spans_azs = False
 
-    subnet_list = r.attrs.get("subnets")
+    subnet_list = r.attrs.get("subnets") or r.attrs.get("vpc_zone_identifier")   # LB / ECS, ASG
     if subnet is None and (group := _first_address(r.attrs.get("db_subnet_group_name"))) in by_address:
         subnet_list = by_address[group].attrs.get("subnet_ids")    # RDS: subnets live on the subnet group
     if subnet is None and isinstance(subnet_list, list) and subnet_list:

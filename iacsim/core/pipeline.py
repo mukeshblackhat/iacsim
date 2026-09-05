@@ -19,6 +19,8 @@ from iacsim.core.interfaces import (
     WALKERS,
 )
 from iacsim.core.models import (
+    CONFIDENCE_ORDER,
+    KIND_PRIORITY,
     Edge,
     Findings,
     InfraGraph,
@@ -50,13 +52,38 @@ def build_graph(target: Path, cfg: Config) -> tuple[InfraGraph, RawResources]:
     graph.source_format = raw.format
     graph.warnings.extend(raw.warnings)
 
+    index: dict[tuple[str, str], Edge] = {}
+    for existing in graph.edges:                       # the normaliser's internet → entry edges
+        existing.ops = existing.ops or [existing.kind]
+        index[(existing.src, existing.dst)] = existing
     for rule_name in cfg.get("inference.rules"):
         rule = INFERENCE_RULES.get(rule_name)()
         for edge in rule.apply(graph, raw):
             edge.rule = rule_name
-            if graph.find_edge(edge.src, edge.dst) is None:
-                graph.add_edge(edge)
+            _merge_edge(graph, index, edge)
     return graph, raw
+
+
+def _merge_edge(graph: InfraGraph, index: dict[tuple[str, str], Edge], edge: Edge) -> None:
+    """One edge per (src, dst), independent of the order the rules ran in.
+
+    A second rule finding the same pair *adds* its operation to `ops`, joins its
+    evidence and rule name, and lifts the confidence; the priced `kind` is the
+    highest-priority operation any rule found (KIND_PRIORITY: a path reads by
+    default, `op: write` in a scenario overrides)."""
+    edge.ops = sorted(set(edge.ops or [edge.kind]), key=KIND_PRIORITY.index)
+    edge.kind = edge.ops[0]
+    old = index.get((edge.src, edge.dst))
+    if old is None:
+        index[(edge.src, edge.dst)] = edge
+        graph.add_edge(edge)
+        return
+    old.ops = sorted(set(old.ops) | set(edge.ops), key=KIND_PRIORITY.index)
+    old.kind = old.ops[0]
+    old.confidence = min((old.confidence, edge.confidence), key=CONFIDENCE_ORDER.index)
+    if edge.rule and edge.rule not in (old.rule or "").split("+"):
+        old.rule = f"{old.rule}+{edge.rule}" if old.rule else edge.rule
+        old.evidence = f"{old.evidence}; {edge.rule}: {edge.evidence}"
 
 
 def load_profile(cfg: Config) -> Profile:

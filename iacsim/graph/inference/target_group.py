@@ -4,6 +4,7 @@
     aws_lb_listener.default_action.target_group_arn (or forward.target_group) → target group
     aws_lb_target_group_attachment.{target_group_arn, target_id} → instance
     aws_ecs_service.load_balancer.target_group_arn → service
+    aws_autoscaling_group.target_group_arns / aws_autoscaling_attachment → ASG
 
 emits lb → compute ROUTE edges. High confidence: this is the actual routing
 configuration.
@@ -42,6 +43,16 @@ class TargetGroupRule(InferenceRule):
             if svc.address in graph.nodes:
                 for tg in addresses_in(svc.attrs.get("load_balancer")):
                     targets_for_tg[tg].append((svc.address, svc.address))
+        for asg in raws_of_type(raw, "aws_autoscaling_group"):
+            if asg.address in graph.nodes:
+                for tg in addresses_in(asg.attrs.get("target_group_arns")):
+                    targets_for_tg[tg].append((asg.address, asg.address))
+        for att in raws_of_type(raw, "aws_autoscaling_attachment"):
+            tg = next(iter(addresses_in(att.attrs.get("lb_target_group_arn"))
+                           or addresses_in(att.attrs.get("alb_target_group_arn"))), None)
+            asg = first_node(graph, att.attrs.get("autoscaling_group_name"), [NodeKind.COMPUTE])
+            if tg and asg:
+                targets_for_tg[tg].append((asg, att.address))
 
         edges = []
         for tg, lbs in lbs_for_tg.items():

@@ -93,9 +93,9 @@ locals {
     WORKSPACE_MEMBERS_TABLE   = module.table["workspace_members"].name
     PUBLIC_SHARES_TABLE       = module.table["public_workflow_shares"].name
     CHECKOUT_SESSIONS_TABLE   = module.table["checkout_sessions"].name
-    PAYMENT_IDEMPOTENCY_TABLE = module.table["payment_idempotency"].name
-    PUBLISHED_APPS_TABLE      = module.table["published_apps"].name
-    APP_EXECUTIONS_TABLE      = module.table["app_executions"].name
+    # payment_idempotency / published_apps / app_executions are NOT passed as env
+    # vars by the real stack (ConfigLoader exports seven); Lambdas reach them
+    # through the IAM grant below alone — matching cdk synth exactly.
   }
 
   # grant_permissions(): every Lambda may hit every table and every GSI

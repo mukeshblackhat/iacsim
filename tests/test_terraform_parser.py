@@ -128,3 +128,27 @@ def test_unresolvable_is_a_warning_not_a_crash(tmp_path):
     assert s.attrs["nope"] == "${mystery(1)}"                    # raw text kept
     assert any("mystery" in w for w in raw.warnings)
     assert any("remote source" in w for w in raw.warnings)
+
+
+def test_data_sources_warn_once_per_module_and_stay_unresolved(tmp_path):
+    root = _project(tmp_path, {"main.tf": '''
+        data "aws_caller_identity" "me" {}
+        data "aws_region" "here" {}
+        resource "aws_s3_bucket" "b" {
+          bucket = "x-${data.aws_caller_identity.me.account_id}-${data.aws_region.here.name}"
+        }
+    '''})
+    raw = TerraformParser().parse(root)
+    data_warnings = [w for w in raw.warnings if "data.* sources are not evaluated" in w]
+    assert len(data_warnings) == 1 and data_warnings[0].startswith("root module:")
+    assert "${" in _by_address(raw)["aws_s3_bucket.b"].attrs["bucket"]      # placeholder kept, no crash
+
+
+def test_duplicate_resource_labels_warn_and_first_wins(tmp_path):
+    root = _project(tmp_path, {
+        "a.tf": 'resource "aws_sqs_queue" "q" { name = "first" }',
+        "b.tf": 'resource "aws_sqs_queue" "q" { name = "second" }',
+    })
+    raw = TerraformParser().parse(root)
+    assert [r.attrs["name"] for r in raw.resources] == ["first"]
+    assert any(w.startswith("duplicate resource aws_sqs_queue.q in") and w.endswith("first wins") for w in raw.warnings)

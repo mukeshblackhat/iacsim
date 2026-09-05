@@ -37,6 +37,19 @@ def nodes_in(graph: InfraGraph, value: Any, kinds: Iterable[NodeKind] | None = N
     return out
 
 
+def task_definition_of(raws: dict[str, RawResource], r: RawResource | None) -> RawResource | None:
+    """An ECS service's container config lives on its task definition (glue,
+    not a node): follow `task_definition` so env vars and roles can be read
+    as if they were on the service."""
+    if r is None or r.type not in ("aws_ecs_service",):
+        return None
+    for address in addresses_in(r.attrs.get("task_definition")):
+        td = raws.get(address)
+        if td is not None and td.type == "aws_ecs_task_definition":
+            return td
+    return None
+
+
 def short(address: str) -> str:
     """Readable form for evidence text.
 

@@ -10,6 +10,11 @@ EC2 box, whose block only knows `handle`; a synthetic INVOKE lands on a table,
 whose block only knows `read`/`write`) the rule falls back to the subtype's
 INVOKE key so the hop is never silently free.
 
+A CONSUME hop (queue → poller, from an event source mapping) is the one case
+where the number lives on the *source*: `sqs.consume` is the poll delay before
+the consumer even starts, so the hop charges that plus the consumer's own
+invoke cost (`warm` / `handle`).
+
 `cloudfront.hit` is deliberately unused: CDN hops are priced as a miss — the
 worst case — until cache behaviour becomes an input.
 """
@@ -44,6 +49,11 @@ class ProcessingRule(CostRule):
         dst = graph.nodes[edge.dst]
         block = profile.processing_for(dst)
         key = OPERATION_FOR_EDGE.get(edge.kind)
+        if edge.kind == EdgeKind.CONSUME:
+            src = graph.nodes.get(edge.src)
+            poll = float(profile.processing_for(src).get("consume", 0)) if src else 0.0
+            own = block.get(INVOKE_KEY_FOR_SUBTYPE.get(dst.subtype, ""))
+            return {"processing": poll + float(own or 0)}
         if key is None or key not in block:
             key = INVOKE_KEY_FOR_SUBTYPE.get(dst.subtype)      # fallback: what a call into this node costs
         value = block.get(key) if key else None

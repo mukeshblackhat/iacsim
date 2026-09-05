@@ -38,6 +38,12 @@ def foosh():
 
 
 @pytest.fixture(scope="session")
+def order_queue():
+    """API GW → Lambda → SQS → Lambda (event source mapping) → DynamoDB (WP2)."""
+    return _build("order-queue")
+
+
+@pytest.fixture(scope="session")
 def foosh_cfn():
     """The real CDK-synthesized template of the same stack (M5)."""
     return _build("foosh-cfn")
@@ -68,6 +74,11 @@ def classic_web_bad_run():
 @pytest.fixture(scope="session")
 def foosh_run():
     return _run("foosh-serverless")
+
+
+@pytest.fixture(scope="session")
+def order_queue_run():
+    return _run("order-queue")
 
 
 def result(output, scenario: str):

@@ -13,9 +13,11 @@ local `module` sources (recursively) including `for_each` / `count` on modules;
 provider aliases via `provider = aws.x` and `providers = { aws = aws.x }` →
 RawResource.region.
 
-Not handled (warning, never a crash): remote module sources, `data` sources,
-`%{ }` template directives, provider-computed functions (cidrsubnet, file, …),
-splat on unresolved values, count/for_each that depend on unresolved values.
+Not handled (warning, never a crash): remote module sources, `data` sources
+(one warning per module; the referencing attribute keeps a placeholder),
+duplicate `resource` labels (first wins), `%{ }` template directives,
+provider-computed functions (cidrsubnet, file, …), splat on unresolved
+values, count/for_each that depend on unresolved values.
 
 Addresses follow Terraform: module.<name>[<key>].<type>.<name>[<key>].
 """

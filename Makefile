@@ -21,6 +21,8 @@ examples:                     ## smoke: every example still parses, runs, diffs
 	.venv/bin/iacsim graph examples/classic-web
 	.venv/bin/iacsim graph examples/classic-web-bad
 	.venv/bin/iacsim graph examples/foosh-serverless
+	.venv/bin/iacsim graph examples/order-queue
+	.venv/bin/iacsim run   examples/order-queue -o json
 	.venv/bin/iacsim run   examples/classic-web -o json
 	.venv/bin/iacsim diff  examples/classic-web examples/classic-web-bad -o json
 

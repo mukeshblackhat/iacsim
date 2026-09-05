@@ -107,6 +107,9 @@ class Scope:
         if name in ("var", "local", "module", "path"):
             return Namespace(name, self.module)
         if name == "data":
+            where = self.module.address_prefix.rstrip(".") or "root module"
+            self.module.warnings.add(
+                f"{where}: data.* sources are not evaluated; references to data.X stay unresolved")
             return Unresolved("data")
         if "_" in name:                                   # provider resource type, e.g. aws_subnet
             return Namespace(name, self.module)

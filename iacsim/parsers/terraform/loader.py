@@ -126,6 +126,10 @@ class ModuleInstance:
             for block in doc.get("resource", []):
                 for rtype, inner in _labelled(block):
                     for rname, body in _labelled(inner):
+                        first = next((f for t, n, _, f in self.resources if (t, n) == (rtype, rname)), None)
+                        if first is not None:
+                            self.warnings.add(f"duplicate resource {rtype}.{rname} in {first} and {file}; first wins")
+                            continue
                         self.resources.append((rtype, rname, body, str(file)))
 
     def _resolve_regions(self, provider_map: dict[str, str]) -> dict[str, str]:

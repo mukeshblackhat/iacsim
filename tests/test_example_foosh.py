@@ -13,6 +13,11 @@ ASL_WORKERS = ["parser", "input_preparer", "output_updater", "finalizer", "text_
                "image_to_image", "video_creation", "lipsync_processing", "router", "text_iterator", "html_template"]
 
 
+def rules(e) -> set[str]:
+    """Merged edges carry every rule that found them: 'env_var+iam_policy'."""
+    return set((e.rule or "").split("+"))
+
+
 def worker(name: str) -> str:
     return f'module.worker["{name}"].aws_lambda_function.this'
 
@@ -48,25 +53,33 @@ def test_api_gateway_invokes_api_lambda(foosh):
     e = edge(graph, "internet", API_GW)
     assert e.rule == "normaliser"
     e = edge(graph, API_GW, API)
-    assert e.kind == EdgeKind.INVOKE and e.rule in ("lambda_permission", "api_gateway_integration")
+    assert e.kind == EdgeKind.INVOKE and e.ops == [EdgeKind.INVOKE]
+    assert rules(e) == {"lambda_permission", "api_gateway_integration"}      # both rules agree, one edge
+
+
+ENV_TABLES = ["workflows", "executions", "checkout_sessions", "credit_transactions", "workspaces",
+              "workspace_members", "public_workflow_shares"]                     # the seven the real stack exports
+IAM_ONLY_TABLES = ["payment_idempotency", "published_apps", "app_executions"]
 
 
 def test_api_lambda_reaches_every_table_the_bucket_and_the_state_machine(foosh):
     graph, _ = foosh
     for t in TABLES:
         e = edge(graph, API, table(t))
-        assert e.kind == EdgeKind.READ and e.rule in ("env_var", "iam_policy")
+        # priced as a read (KIND_PRIORITY) but the IAM grant proves writes happen too
+        assert e.kind == EdgeKind.READ and e.ops == [EdgeKind.READ, EdgeKind.WRITE], t
+        assert rules(e) == ({"env_var", "iam_policy"} if t in ENV_TABLES else {"iam_policy"}), t
     assert edge(graph, API, BUCKET).kind == EdgeKind.READ
     e = edge(graph, API, SFN)
-    assert e.kind == EdgeKind.INVOKE and e.rule in ("env_var", "iam_policy")
-    assert "STATE_MACHINE_ARN" in e.evidence or "states:StartExecution" in e.evidence
+    assert e.kind == EdgeKind.INVOKE and rules(e) == {"env_var", "iam_policy"}
+    assert "STATE_MACHINE_ARN" in e.evidence and "states:StartExecution" in e.evidence
 
 
 def test_state_machine_invokes_every_task_lambda_from_the_asl(foosh):
     graph, _ = foosh
     for w in ASL_WORKERS:
         e = edge(graph, SFN, worker(w))
-        assert e.kind == EdgeKind.INVOKE and e.rule == "step_functions", w
+        assert e.kind == EdgeKind.INVOKE and "step_functions" in rules(e), w
         assert "workflow.asl.json" in e.evidence
 
 
@@ -74,7 +87,7 @@ def test_iam_fills_in_lambdas_the_asl_never_calls(foosh):
     graph, _ = foosh
     for w in ("text_input", "image_input", "video_input"):
         e = edge(graph, SFN, worker(w))
-        assert e.rule == "iam_policy" and e.kind == EdgeKind.INVOKE
+        assert rules(e) == {"iam_policy"} and e.kind == EdgeKind.INVOKE
 
 
 def test_workflow_structure_is_recorded_for_the_simulator(foosh):
@@ -112,6 +125,8 @@ def test_start_workflow_attributes_every_table_read_to_the_api_lambda(foosh_run)
     assert srcs == {API}
     write = next(h for h in r.hops if h.dst == table("executions"))
     assert write.breakdown["processing"] == 8.0            # op: write
+    read = next(h for h in r.hops if h.dst == table("workflows"))
+    assert "also may write: use op: write" in read.evidence   # the IAM grant allows it; the step didn't say so
     assert r.hops[-1].dst == API and "response leg" in r.hops[-1].evidence
     assert r.hops[-1].breakdown == {} and r.hops[-1].latency_ms == 0    # no second warm + cold start on the way back
 
