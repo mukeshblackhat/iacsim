@@ -37,10 +37,17 @@ request is already at repeats the previous hop from the same caller.
 
 Structure: parallel branches are walked from `current`, cost = max(branches),
 every hop recorded, `on_critical_path` only on the slowest branch (decided on
-the backend's scalar view — the mean, for samples); fan-out prices one copy
-per *wave*: `count` copies through an orchestrator whose Map allows `c` at a
-time cost ceil(count / c) sequential waves (M8 — before that, one copy
-regardless of count); `wait_ms` is a hop-less cost in category "wait".
+the backend's scalar view — the mean, for samples); nodes visited inside the
+branches stay "visited" after the join, so a later step back to one of them is
+a response leg. Fan-out prices one copy per *wave*: `count` copies through an
+orchestrator whose Map allows `c` at a time cost ceil(count / c) sequential
+waves. `c` is the concurrency of the **innermost** Map that encloses a Task
+targeting the fan-out node (the real CDK workflow nests `Choice → Map(1) →
+Map(5)`); when different branches enclose it with different concurrencies the
+largest is used and a warning says so; `fanout.concurrency` in scenarios.yaml
+pins it. `EvaluatedHop.unit_cost` keeps the one-copy cost so the load walker
+can charge capacity per copy. An unknown `op` is an error, never a silent
+fallback. `wait_ms` is a hop-less cost in category "wait".
 """
 
 from __future__ import annotations
@@ -137,11 +144,13 @@ class Planner:
                 self._hop(step.node, step, walk)
                 self.shape["sequential_hops"] += 1
             elif step.fanout is not None:
-                node, count = step.fanout
-                concurrency = self._map_concurrency(walk.visited)
+                node, count, *rest = step.fanout
+                explicit = rest[0] if rest else None
+                concurrency = int(explicit) if explicit else self._map_concurrency(walk.visited, node)
                 waves = max(1, math.ceil(count / concurrency)) if concurrency else 1
+                why = "fanout.concurrency" if explicit else "Map MaxConcurrency"
                 suffix = (f"×{count} concurrent copies, costed once" if waves == 1 else
-                          f"×{count} copies in {waves} waves of {concurrency} (Map MaxConcurrency)")
+                          f"×{count} copies in {waves} waves of {concurrency} ({why})")
                 self._hop(node, step, walk, suffix=suffix)
                 last = _last_hop(walk.items)
                 if last is not None:
@@ -156,24 +165,42 @@ class Planner:
     def _parallel(self, branches: list[list[Step]], walk: _Walk) -> None:
         self._parallel_seq += 1
         group = PlannedGroup(label=f"parallel{self._parallel_seq}", branches=[])
+        fork_len, subs = len(walk.visited), []
         for i, branch in enumerate(branches, 1):
-            sub = _Walk(current=walk.current, visited=list(walk.visited), items=[])
+            sub = _Walk(current=walk.current, visited=list(walk.visited), items=[])   # branches don't see each other
             self._walk_steps(branch, sub)
             _tag_group(sub.items, f"{group.label}/branch{i}")
             group.branches.append(sub.items)
+            subs.append(sub)
+        for sub in subs:                             # after the join the request *has* been everywhere the
+            for node_id in sub.visited[fork_len:]:   # branches went: a later step back there is a response leg
+                if node_id not in walk.visited:
+                    walk.visited.append(node_id)
         walk.items.append(group)
         if len(branches) > 1:
             self.shape["parallel_groups"] += 1      # a single-branch group (Map replay) is not parallelism
         # branches rejoin: `current` stays where the fork happened
 
-    def _map_concurrency(self, visited: list[str]) -> int | None:
-        """MaxConcurrency of the Map in the most recent orchestrator the request
-        went through — the cap on how many fan-out copies run at once."""
+    def _map_concurrency(self, visited: list[str], dst: str) -> int | None:
+        """MaxConcurrency that caps how many fan-out copies of `dst` run at once:
+        the innermost Map, in the most recent orchestrator the request went
+        through, that encloses a Task targeting `dst`. Branches that enclose it
+        differently → the largest, with a warning. No enclosing Map → the first
+        top-level Map (a fan-out the definition does not name), else None."""
         for node_id in reversed(visited):
             node = self.graph.nodes.get(node_id)
             if node is None or node.kind != "orchestrator":
                 continue
-            for item in node.attrs.get("workflow") or []:
+            workflow = node.attrs.get("workflow") or []
+            found = sorted({c for c in _enclosing_map_concurrencies(workflow, dst, None) if c})
+            if len(found) > 1:
+                self.warnings.append(
+                    f"fan-out {self.graph.display_name(dst)}: Map states with concurrency "
+                    f"{{{', '.join(str(c) for c in found)}}} enclose it; using {found[-1]} — "
+                    f"set fanout.concurrency in scenarios.yaml to pin")
+            if found:
+                return found[-1]
+            for item in workflow:
                 if item.get("type") == "Map" and item.get("concurrency"):
                     return int(item["concurrency"])
             return None
@@ -199,7 +226,9 @@ class Planner:
         if mode == "via caller":
             src = edge.src
         if step.op:
-            edge = self._reprice(edge, OP_TO_KIND.get(step.op, edge.kind))
+            if step.op not in OP_TO_KIND:
+                raise ValueError(f"scenario step {dst}: op '{step.op}' is not one of {sorted(OP_TO_KIND)}")
+            edge = self._reprice(edge, OP_TO_KIND[step.op])
 
         evidence = self._evidence(edge, mode, came_from)
         if suffix:
@@ -291,6 +320,27 @@ def _last_hop(items: list[PlanItem]) -> PlannedHop | None:
     return None
 
 
+def _enclosing_map_concurrencies(items: list[dict], dst: str, innermost: int | None) -> list[int | None]:
+    """For every Task targeting `dst`, the concurrency of the innermost Map that
+    encloses it (None when no Map does). Recurses through Map bodies, Parallel
+    branches (list) and Choice branches (dict)."""
+    out: list[int | None] = []
+    for item in items:
+        kind = item.get("type")
+        if kind == "Task" and item.get("target") == dst:
+            out.append(innermost)
+        elif kind == "Map":
+            inner = int(item["concurrency"]) if item.get("concurrency") else innermost
+            out += _enclosing_map_concurrencies(item.get("body") or [], dst, inner)
+        elif kind == "Parallel":
+            for branch in item.get("branches") or []:
+                out += _enclosing_map_concurrencies(branch, dst, innermost)
+        elif kind == "Choice":
+            for branch in (item.get("branches") or {}).values():
+                out += _enclosing_map_concurrencies(branch, dst, innermost)
+    return out
+
+
 # ------------------------------------------------------------------ evaluation
 
 @dataclass
@@ -329,8 +379,9 @@ class ExpectedBackend:
 @dataclass
 class EvaluatedHop:
     hop: PlannedHop
-    cost: HopCost
+    cost: HopCost                        # what the request pays: one copy × waves
     on_critical_path: bool = True
+    unit_cost: HopCost | None = None     # one copy, unscaled — what one fan-out invocation costs
 
 
 @dataclass
@@ -355,8 +406,9 @@ class _Evaluator:
         total, hops = self.b.zero(), []
         for item in items:
             if isinstance(item, PlannedHop):
-                cost = _scaled(self.b.cost(item), item.waves)
-                hops.append(EvaluatedHop(item, cost))
+                unit = self.b.cost(item)
+                cost = _scaled(unit, item.waves)
+                hops.append(EvaluatedHop(item, cost, unit_cost=unit))
                 total = total + cost.total
             else:
                 total = total + self._group(item, hops)

@@ -161,6 +161,88 @@ def test_fanout_costs_one_copy_per_wave(count, concurrency, waves):
         assert f"{waves} waves" in r.hops[0].evidence
 
 
+def _nested_graph(outer, inner, other_branch=None):
+    """The real CDK shape: Choice → Map(outer) → Map(inner) → Task w. With
+    `other_branch`, a second Choice branch encloses w in a single Map(other_branch)."""
+    chain = [{"state": "Levels", "type": "Map", "concurrency": outer,
+              "body": [{"state": "Nodes", "type": "Map", "concurrency": inner,
+                        "body": [{"state": "Prep", "type": "Task", "target": "w", "kind": "invoke"}]}]}]
+    branches = {"parallel": chain}
+    if other_branch is not None:
+        branches["sequential"] = [{"state": "Seq", "type": "Map", "concurrency": other_branch,
+                                   "body": [{"state": "Prep2", "type": "Task", "target": "w", "kind": "invoke"}]}]
+    g = InfraGraph()
+    g.add_node(Node("sm", NodeKind.ORCHESTRATOR, "step_functions",
+                    attrs={"workflow": [{"state": "Mode", "type": "Choice", "branches": branches}]}))
+    g.add_node(Node("w", NodeKind.COMPUTE, "lambda"))
+    g.add_node(Node("other", NodeKind.COMPUTE, "lambda"))
+    for dst in ("w", "other"):
+        e = Edge("sm", dst, EdgeKind.INVOKE, Confidence.DECLARED, "test")
+        e.latency = Latency(expected=100.0, breakdown={"processing": 100.0})
+        g.add_edge(e)
+    return g
+
+
+@pytest.mark.parametrize("count,waves", [(1, 1), (5, 1), (6, 2), (10, 2), (11, 3)])
+def test_fanout_uses_the_innermost_map_under_a_choice(count, waves):
+    plan = Planner(_nested_graph(1, 5), None).plan(Scenario("s", "sm", [Step(fanout=("w", count))]))
+    assert plan.shape["fanout_waves"] == waves and not plan.warnings          # inner Map(5), not outer Map(1)
+
+
+def test_fanout_under_choice_picks_the_innermost_map_and_warns():
+    g = _nested_graph(1, 5, other_branch=1)                                   # {5} vs {1} disagree
+    plan = Planner(g, None).plan(Scenario("s", "sm", [Step(fanout=("w", 10))]))
+    assert plan.shape["fanout_waves"] == 2                                     # largest wins
+    assert any("Map states with concurrency {1, 5}" in w and "using 5" in w for w in plan.warnings)
+    pinned = Planner(g, None).plan(Scenario("s", "sm", [Step(fanout=("w", 10, 2))]))
+    assert pinned.shape["fanout_waves"] == 5 and not pinned.warnings          # fanout.concurrency pins it
+    assert "fanout.concurrency" in pinned.items[0].evidence
+    unmapped = Planner(g, None).plan(Scenario("s", "sm", [Step(fanout=("other", 10))]))
+    assert unmapped.shape["fanout_waves"] == 1                                 # no Map targets it: one wave
+
+
+def test_fanout_erlangs_scale_with_copies_not_waves():
+    """Capacity is per copy: 10 invocations of 100 ms each, whatever the wave count."""
+    g = _orchestrated_graph(5)
+    g.add_node(Node("t", NodeKind.DATASTORE, "dynamodb", attrs={"billing_mode": "PAY_PER_REQUEST"}))
+    e = Edge("sm", "t", EdgeKind.WRITE, Confidence.DECLARED, "test")
+    e.latency = Latency(expected=8.0, breakdown={"processing": 8.0})
+    g.add_edge(e)
+    walker = WALKERS.get("load")()
+    scenarios = [Scenario("fan", "sm", [Step(fanout=("w", 10)), Step(fanout=("t", 10))])]
+    load = LoadProfile(users=[1], per_user=[PerUser("fan", every_s=1.0)])
+    r = walker.run(g, scenarios[0], price=None, profile=_profile(), scenarios=scenarios, load=load)
+    assert r.shape["fanout_waves"] == 4                                         # 2 + 2: latency pays waves
+    util = r.load["utilisation"][1]
+    pool = r.load["resources"][cap.UNRESERVED_POOL]
+    assert util[cap.UNRESERVED_POOL] == pytest.approx(1.0 * 10 * 0.100 / pool["slots"], rel=1e-3)   # λ·copies·hold/slots
+    assert util["t"] == pytest.approx(1.0 * 10 / 40000, abs=5e-5)               # rps-capped: λ·copies/rps (stored to 4 dp)
+
+
+def test_reserved_concurrency_zero_is_throttled_off():
+    g = _graph()
+    g.nodes["fn"].attrs["concurrency"] = 0
+    r = _run_load(g, _load([100]))[0]
+    assert r.load["utilisation"][100]["fn"] is None                             # no servers: SAT, not 0 %
+    assert r.load["latency"][100]["saturated"] and r.load["latency"][100]["saturated_by"] == ["fn"]
+    assert "throttled off" in r.load["resources"]["fn"]["source"]
+    assert "Infinity" not in json.dumps(r.load)
+    from iacsim.core.interfaces import ANALYZERS
+    findings = ANALYZERS.get("saturation")().analyse(r, g)
+    first = next(f for f in findings if f.subject == "first_to_break")
+    assert first.refs == ["fn"] and first.latency_ms == 0
+
+
+def test_while_running_without_a_mix_is_a_stated_assumption():
+    g = _graph()
+    load = LoadProfile(users=[10], per_user=[PerUser("hit", every_s=2.0, while_running=True)])
+    r = _run_load(g, load)[0]
+    assert any("'while: running' with no workflow_mix" in a for a in r.load["assumptions"])
+    assert r.load["tail_factor"] == 1.3
+    plain = _run_load(g, _load([10]))[0]
+    assert not any("while: running" in a for a in plain.load["assumptions"])
+
+
 # ------------------------------------------------------------------ the load walker on a hand-built graph
 
 def _load(users):

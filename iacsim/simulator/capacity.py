@@ -62,8 +62,13 @@ class Resource:
         return max(1.0, (self.rps or 0.0) * self.mean_hold_s)
 
     def utilisation(self) -> float:
+        """ρ = offered erlangs / servers. Zero servers (a Lambda with
+        reserved_concurrent_executions = 0) is saturated by any load at all:
+        ρ = ∞, which the walker records as None and the report prints as SAT."""
         c = self.servers()
-        return self.erlangs / c if c else 0.0
+        if c > 0:
+            return self.erlangs / c
+        return math.inf if self.erlangs > 0 else 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {"key": self.key, "label": self.label, "subtype": self.subtype, "slots": self.slots,
@@ -85,7 +90,8 @@ def resources_for(graph: InfraGraph, profile: Profile) -> dict[str, Resource]:
             continue
         r = _resource(node, cap)
         if r is None:
-            unreserved.append(node)
+            if node.subtype == "lambda":        # only Lambdas share the account pool
+                unreserved.append(node)
             continue
         if node.subtype == "lambda":
             reserved_total += int(r.slots or 0)
@@ -117,8 +123,10 @@ def _resource(node: Node, cap: dict[str, Any]) -> Resource | None:
     section = cap.get(st) or {}
     if st == "lambda":
         if "concurrency" in a:
-            return Resource(node.id, label, st, slots=float(a["concurrency"]),
-                            source=f"reserved_concurrent_executions={a['concurrency']} on {node.id}")
+            slots = float(a["concurrency"])
+            note = " (function is throttled off)" if slots == 0 else ""
+            return Resource(node.id, label, st, slots=slots,
+                            source=f"reserved_concurrent_executions={a['concurrency']}{note} on {node.id}")
         return None                                    # → the shared pool
     if st == "ec2":
         family = str(a.get("instance_type", "")).split(".")[0]

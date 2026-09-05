@@ -264,8 +264,8 @@ exists, charge that leg first; then `_walk_steps` (`:~130`), which has four bran
 | step | action |
 |---|---|
 | `node` | `_hop` (below) |
-| `fanout {node, count}` | look up the enclosing Map's concurrency (`_map_concurrency` `:~165`; today: first top-level Map / after WP3: innermost Map enclosing the target); waves = `ceil(count / concurrency)`; one hop stamped with `copies`/`waves` |
-| `parallel [[…],[…]]` | `_parallel` (`:~152`): each branch walked from the same current node in a copy of the state; group = max of branches (after WP3 branch visits merge back) |
+| `fanout {node, count}` | look up the concurrency of the innermost Map enclosing a Task that targets the node (`_map_concurrency` `:~178`; branches that disagree → largest + warning; `fanout.concurrency` in scenarios.yaml pins it); waves = `ceil(count / concurrency)`; one hop stamped with `copies`/`waves`; `EvaluatedHop.unit_cost` keeps the one-copy cost for capacity |
+| `parallel [[…],[…]]` | `_parallel` (`:~152`): each branch walked from the same current node in a copy of the state; group = max of branches; nodes visited inside branches are merged back so a later step to one of them is a response leg |
 | `wait_ms` | a hop with `{"wait": ms}` |
 
 **`_hop`** (`:~186`): if the destination equals the current node, it is a "repeat call" from

@@ -14,7 +14,10 @@ traced to a formula. For each user count U in the sweep:
                            Lambda). A Lambda holds its concurrency slot while it
                            waits on DynamoDB / S3 / FAL — that is the point.
                   others   the hop's own service time (processing + cold start).
-                Fan-out copies count `copies` times (one per Map item).
+                Fan-out: capacity is charged per *copy* — `copies` invocations
+                each holding one copy's cost (EvaluatedHop.unit_cost) — while the
+                request's latency pays one copy per wave. A caller waiting on a
+                fan-out waits for every wave.
   3. offered    per resource: a = Σ_s λ_s × Σ_visits hold_s ; ρ = a / servers
                 (simulator/capacity.py).
   4. waits      Erlang-C mean and p99 queue wait per resource; ρ ≥ 1 → saturated.
@@ -35,6 +38,7 @@ needs *all* scenarios to share resources, so the pipeline passes them in
 
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -60,7 +64,8 @@ DEFAULT_TAIL_FACTOR = 1.3
 
 @dataclass
 class _Visit:
-    """One occupancy of a resource by one scenario: hold seconds × copies."""
+    """One occupancy of a resource by one scenario: `copies` invocations, each
+    holding the resource for `hold_s` seconds (offered load = rate × copies × hold)."""
     resource: str
     hold_s: float
     copies: int = 1
@@ -94,6 +99,7 @@ class LoadWalker(Walker):
         result.load["utilisation"] = self._sweep["utilisation"]
         result.load["thresholds"] = self._sweep["thresholds"]
         result.load["assumptions"] = self._sweep["assumptions"]
+        result.load["tail_factor"] = self._sweep["tail_factor"]
         return result
 
     # ------------------------------------------------------------ the sweep
@@ -111,6 +117,14 @@ class LoadWalker(Walker):
             raise LoadProfileError(f"load profile names unknown scenario(s): {', '.join(missing)}")
 
         rps_per_user = _rates_per_user(load, planned)
+        assumptions = [
+            "M/M/c queueing per resource (Poisson arrivals, exponential service)",
+            "a Lambda holds its concurrency slot for its whole invocation, including downstream calls",
+            "account Lambda concurrency from the profile (capacity.lambda.account_concurrency)",
+            f"p99 = {tail_factor:g} × no-contention expected + p99 queue waits on the critical path",
+        ]
+        if any(p.while_running for p in load.per_user) and not load.workflow_mix:
+            assumptions.append("'while: running' with no workflow_mix: assumed always active")
         resources = resources_for(graph, profile) if profile else {}
         utilisation: dict[int, dict[str, float]] = {}
         per_scenario: dict[str, dict[str, Any]] = {
@@ -121,24 +135,20 @@ class LoadWalker(Walker):
             rates = {name: users * rps for name, rps in rps_per_user.items()}
             _offer(resources, planned, rates, graph)
             waits = {key: queue_wait(r) for key, r in resources.items()}
-            utilisation[users] = {key: round(w.utilisation, 4) for key, w in waits.items()}
+            utilisation[users] = {key: (round(w.utilisation, 4) if math.isfinite(w.utilisation) else None)
+                                  for key, w in waits.items()}          # None = no servers at all → SAT
             for name, p in planned.items():
                 per_scenario[name]["rps"][users] = round(rates.get(name, 0.0), 4)
                 per_scenario[name]["latency"][users] = _latency_at(p, waits, resources, graph, tail_factor)
 
         return {
             "users": load.users, "planned": planned, "utilisation": utilisation, "per_scenario": per_scenario,
-            "thresholds": load.thresholds,
+            "thresholds": load.thresholds, "tail_factor": tail_factor,
             # by_scenario shares are U-independent (everything is linear in U); taken at the last U
             "resources": {key: r.to_dict() | {"erlangs_per_user": _per_user_erlangs(r, load.users[-1]),
                                               "by_scenario": {n: round(e, 6) for n, e in r.by_scenario.items()}}
                           for key, r in resources.items()},
-            "assumptions": [
-                "M/M/c queueing per resource (Poisson arrivals, exponential service)",
-                "a Lambda holds its concurrency slot for its whole invocation, including downstream calls",
-                "account Lambda concurrency from the profile (capacity.lambda.account_concurrency)",
-                f"p99 = {tail_factor:g} × no-contention expected + p99 queue waits on the critical path",
-            ],
+            "assumptions": assumptions,
         }
 
     def _plan(self, scenario: Scenario, planner: Planner, graph: InfraGraph) -> _Planned:
@@ -168,27 +178,31 @@ def _kind(graph: InfraGraph, node_id: str):
 
 
 def _visits(base: Evaluation, graph: InfraGraph) -> list[_Visit]:
-    """Which resource each hop occupies and for how long (seconds)."""
-    lambda_span: dict[str, float] = defaultdict(float)     # node id → ms it is busy per scenario run
-    lambda_copies: dict[str, int] = defaultdict(int)
+    """Which resource each hop occupies and for how long (seconds), per invocation.
+
+    Capacity is per *copy*: a fan-out of 10 is 10 invocations each holding one
+    copy's cost (`unit_cost`), whatever the wave count. The request's own
+    latency (`cost`, one copy × waves) is what a *caller* waits for."""
+    busy_ms: dict[str, float] = defaultdict(float)         # Lambda → ms busy across all its invocations
+    invocations: dict[str, int] = defaultdict(int)         # Lambda → invocations per scenario run
     visits: list[_Visit] = []
     for e in base.hops:
-        hop, ms = e.hop, e.cost.total
+        hop, unit = e.hop, e.unit_cost or e.cost
         if hop.is_wait:
             continue
         dst_node = graph.nodes.get(hop.dst)
         if dst_node is not None and dst_node.subtype == "lambda":
-            lambda_span[hop.dst] += ms                     # its own invocation
-            lambda_copies[hop.dst] += hop.copies
+            busy_ms[hop.dst] += unit.total * hop.copies    # every copy runs its own invocation
+            invocations[hop.dst] += hop.copies
         elif dst_node is not None and dst_node.kind not in (NodeKind.NETWORK, NodeKind.EXTERNAL):
-            service = sum(v for k, v in e.cost.breakdown.items() if k not in ("distance", "transition"))
+            service = sum(v for k, v in unit.breakdown.items() if k not in ("distance", "transition"))
             visits.append(_Visit(hop.dst, service / 1000.0, hop.copies))
         src_node = graph.nodes.get(hop.src)
         if src_node is not None and src_node.subtype == "lambda" and hop.dst != hop.src:
-            lambda_span[hop.src] += ms                     # time the Lambda spends waiting downstream
-    for node_id, span in lambda_span.items():
-        copies = max(1, lambda_copies.get(node_id, 1))
-        visits.append(_Visit(node_id, span / 1000.0 / copies, copies))
+            busy_ms[hop.src] += e.cost.total               # the caller waits for every wave downstream
+    for node_id, busy in busy_ms.items():
+        n = max(1, invocations.get(node_id, 1))
+        visits.append(_Visit(node_id, busy / 1000.0 / n, n))
     return visits
 
 

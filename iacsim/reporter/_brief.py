@@ -97,6 +97,7 @@ class BriefBuilder:
             subtitle="analytic M/M/c per resource; utilisation is linear in users, so the break point is exact",
             meta=[("users", ", ".join(f"{u:,}" for u in users)),
                   ("thresholds", f"p99 {load.get('thresholds', {}).get('p99_ms', 0):,.0f} ms · utilisation {threshold:.0%}"),
+                  ("tail factor", f"{load.get('tail_factor', 1.3):g} × no-contention expected (simulation.tail_factor)"),
                   ("assumes", "; ".join(load.get("assumptions", [])))],
             sections=[s for s in sections if s.rows],
         )
@@ -106,11 +107,14 @@ class BriefBuilder:
                     intro="▲ past the utilisation threshold · SAT = saturated (queue grows without bound)")
         resources = load["resources"]
         last = load["utilisation"][users[-1]]
-        for key, _ in sorted(last.items(), key=lambda kv: -kv[1])[:8]:
+        for key, _ in sorted(last.items(), key=lambda kv: -(kv[1] if kv[1] is not None else float("inf")))[:8]:
             r = resources[key]
             cells = [r["label"]]
             for u in users:
                 rho = load["utilisation"][u].get(key, 0.0)
+                if rho is None:                          # no servers at all
+                    cells.append("SAT")
+                    continue
                 cells.append(f"{rho:.0%}" + (" SAT" if rho >= 1 else " ▲" if rho >= threshold else ""))
             cells.append(f"{r['slots']:,.0f} slots" if r.get("slots") is not None else f"{r['rps']:,.0f} rps")
             s.rows.append(Row(cells, note=clip(r["source"], 90), note_col=0))

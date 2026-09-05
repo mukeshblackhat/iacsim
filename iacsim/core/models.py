@@ -172,12 +172,14 @@ class Step:
               writes" on an edge inference tagged as a read.
     parallel: run each branch (a list of Steps) concurrently; cost = max(branches)
     fanout:   visit `node` `count` times concurrently (Step Functions Map, SQS batch);
-              costed once, the count is recorded in Result.shape
+              `(node, count)` or `(node, count, concurrency)` — costed once per wave
+              of `concurrency` copies (the enclosing Map's MaxConcurrency when the
+              third element is absent); the count is recorded in Result.shape
     wait_ms:  a deliberate pause (Step Functions Wait state); no hop, pure cost
     """
     node: str | None = None
     parallel: list[list[Step]] | None = None
-    fanout: tuple[str, int] | None = None
+    fanout: tuple[str, int] | tuple[str, int, int | None] | None = None
     wait_ms: float | None = None
     op: str | None = None
     note: str | None = None

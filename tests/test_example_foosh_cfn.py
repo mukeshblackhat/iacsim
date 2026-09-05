@@ -105,6 +105,23 @@ def test_step_functions_workflow_replays_from_the_real_definition(foosh_cfn):
     assert len(targets) == 12
 
 
+def test_cfn_fanout_uses_the_inner_map(foosh_cfn):
+    """The real definition nests Choice → Map(1) → Map(5) around the node-level
+    tasks (and Map(1) alone in the sequential branch): a fan-out on the input
+    preparer must see concurrency 5 — and say that the branches disagree."""
+    import math
+
+    from iacsim.core.models import NodeKind, Scenario, Step
+    from iacsim.simulator.traversal import Planner
+    g = foosh_cfn[0] if isinstance(foosh_cfn, tuple) else foosh_cfn
+    sfn = next(n.id for n in g.nodes.values() if n.kind == NodeKind.ORCHESTRATOR)
+    prep = next(n.id for n in g.nodes.values() if n.label == "async-workflow-input-preparer-staging")
+    for count in (3, 10, 11):
+        plan = Planner(g, None).plan(Scenario("t", sfn, [Step(fanout=(prep, count))]))
+        assert plan.shape["fanout_waves"] == math.ceil(count / 5), count
+    assert any("Map states with concurrency {1, 5}" in w for w in plan.warnings)
+
+
 def test_run_works_on_the_template_with_inferred_scenarios():
     target = EXAMPLES / "foosh-cfn"
     out = run(target, load_config(target))

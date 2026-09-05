@@ -8,9 +8,10 @@
         - parallel:
             - aws_dynamodb_table.orders
             - aws_sqs_queue.notifications
-        - fanout: { node: aws_lambda_function.render, count: 20 }
+        - fanout: { node: aws_lambda_function.render, count: 20 }   # waves from the enclosing Map
+        - fanout: { node: aws_lambda_function.render, count: 20, concurrency: 5 }   # pinned
         - node: aws_dynamodb_table.orders     # override the edge's operation
-          op: write
+          op: write                           # must be one of EdgeKind's values
         - wait_ms: 20000                      # Step Functions Wait
         - aws_lambda_function.confirm
 
@@ -27,7 +28,9 @@ from typing import Any
 import yaml
 
 from iacsim.core.interfaces import SCENARIO_SOURCES, ScenarioSource
-from iacsim.core.models import InfraGraph, Scenario, Step
+from iacsim.core.models import EdgeKind, InfraGraph, Scenario, Step
+
+VALID_OPS = sorted(k.value for k in EdgeKind)
 
 
 class UnknownNodeInScenario(ValueError):
@@ -57,6 +60,7 @@ class YamlScenarioSource(ScenarioSource):
             return Step(node=item)
         if "node" in item:
             self._check(item["node"], graph, scenario)
+            self._check_op(item.get("op"), item["node"], scenario)
             return Step(node=item["node"], op=item.get("op"), note=item.get("note"))
         if "wait_ms" in item:
             return Step(wait_ms=float(item["wait_ms"]), note=item.get("note"))
@@ -66,9 +70,19 @@ class YamlScenarioSource(ScenarioSource):
                         for x in item["parallel"]]
             return Step(parallel=branches)
         if "fanout" in item:
-            self._check(item["fanout"]["node"], graph, scenario)
-            return Step(fanout=(item["fanout"]["node"], int(item["fanout"]["count"])))
+            fan = item["fanout"]
+            self._check(fan["node"], graph, scenario)
+            concurrency = int(fan["concurrency"]) if fan.get("concurrency") else None
+            return Step(fanout=(fan["node"], int(fan["count"]), concurrency))
         raise ValueError(f"scenario '{scenario}': unrecognised step {item!r}")
+
+    @staticmethod
+    def _check_op(op: Any, node_id: str, scenario: str) -> None:
+        if op is None or op in VALID_OPS:
+            return
+        hint = difflib.get_close_matches(str(op), VALID_OPS, n=1)
+        suffix = f" — did you mean '{hint[0]}'?" if hint else ""
+        raise ValueError(f"scenario '{scenario}' step {node_id}: op '{op}' is not one of {VALID_OPS}{suffix}")
 
     @staticmethod
     def _check(node_id: str, graph: InfraGraph, scenario: str) -> None:

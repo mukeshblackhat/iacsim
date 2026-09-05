@@ -49,6 +49,9 @@ class SaturationAnalyzer(Analyzer):
         util_at_max = self.load["utilisation"].get(u_max) or {}
         limits = {}
         for key, rho in util_at_max.items():
+            if rho is None:                              # no servers at all: broken at any load
+                limits[key] = (0.0, 0.0)
+                continue
             if rho <= 0:
                 limits[key] = (None, None)
                 continue
@@ -75,9 +78,10 @@ class SaturationAnalyzer(Analyzer):
                 continue
             r = self.load["resources"][key]
             rho_max = self.load["utilisation"][self.users[-1]].get(key, 0.0)
+            rho_text = f"{rho_max:.0%}" if rho_max is not None else "SAT (no servers)"
             detail = (f"{self.load['thresholds'].get('utilisation', 0.8):.0%} at ~{u_thr:,.0f} users, "
-                      f"100% at ~{u_one:,.0f}; {rho_max:.0%} at {self.users[-1]:,} users; {self._capacity_phrase(r)}")
-            lines.append(Finding("saturation", f"resource:{r['label']}", round(u_one, 1), rho_max, detail,
+                      f"100% at ~{u_one:,.0f}; {rho_text} at {self.users[-1]:,} users; {self._capacity_phrase(r)}")
+            lines.append(Finding("saturation", f"resource:{r['label']}", round(u_one, 1), rho_max or 0.0, detail,
                                  refs=[key], layer="capacity", additive=False))
         return lines[:MAX_RESOURCE_LINES]
 
@@ -114,6 +118,11 @@ class SaturationAnalyzer(Analyzer):
                 continue
             r = self.load["resources"][key]
             rho = self.load["utilisation"][target].get(key, 0.0)
+            if rho is None:                              # throttled off: any positive capacity is the fix
+                out.append(Finding("saturation", "ceiling", float(target), 0.0,
+                                   f"{r['label']} has no capacity at all ({r['source']}) — give it some",
+                                   refs=[key], layer="capacity", additive=False))
+                break
             need = rho / threshold                      # capacity multiplier to sit at threshold at `target`
             out.append(self._ceiling_for(r, key, need, target))
             top = self._top_contributor(key, with_share=True)
@@ -134,9 +143,9 @@ class SaturationAnalyzer(Analyzer):
         st = r["subtype"]
         if st == "lambda" and r["slots"] and r.get("members"):
             new = math.ceil(r["slots"] * need)
-            text = (f"raise the account Lambda concurrency quota so the unreserved pool is ≥ {new:,} "
-                    f"(now {r['slots']:,.0f}) for {target:,} users, or reserve concurrency for the heaviest "
-                    f"holders so they stop sharing")
+            text = (f"raise the account Lambda concurrency quota (capacity.lambda.account_concurrency) so the "
+                    f"unreserved pool is ≥ {new:,} (now {r['slots']:,.0f}) for {target:,} users, or reserve "
+                    f"concurrency for the heaviest holders so they stop sharing")
         elif st == "lambda":
             new = math.ceil(r["slots"] * need)
             text = f"raise reserved_concurrent_executions on {key} from {r['slots']:,.0f} → {new:,} for {target:,} users"

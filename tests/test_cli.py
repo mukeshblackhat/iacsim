@@ -231,7 +231,8 @@ def test_run_load_walker_writes_capacity():
     assert r.exit_code == 0, r.output
     assert "users until it breaks" in r.output and "first to break" in r.output
     doc = json.loads((target / ".iacsim" / "report.json").read_text())
-    assert doc["capacity"]["first_to_break"]["resource"] == "module.api.aws_lambda_function.this"
+    util_max = doc["capacity"]["utilisation"]["10000"]                 # linear in users: hottest breaks first
+    assert doc["capacity"]["first_to_break"]["resource"] == max(util_max, key=util_max.get)
     assert doc["scenarios"][0]["load"]["users"] == [100, 500, 1000, 2000, 5000, 10000]
     assert "Infinity" not in json.dumps(doc)
 

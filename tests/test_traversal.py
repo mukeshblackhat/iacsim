@@ -80,6 +80,32 @@ def test_unknown_region_warns_once_per_node():
     assert len(warnings) == 1 and warnings[0].startswith("table:")
 
 
+def test_bad_op_is_an_error():
+    import pytest
+    c = _costed()
+    with pytest.raises(ValueError, match="op 'wirte' is not one of"):
+        _run(c, "gw", [Step(node="fn"), Step(node="table", op="wirte")])
+
+
+def test_bad_op_in_scenarios_yaml_is_an_error_with_a_hint(tmp_path):
+    import pytest
+
+    from iacsim.scenarios.yaml_file import YamlScenarioSource
+    g = tiny_graph()
+    (tmp_path / "scenarios.yaml").write_text("t:\n  entry: gw\n  steps:\n    - node: table\n      op: wirte\n")
+    with pytest.raises(ValueError, match="op 'wirte' is not one of .*did you mean 'write'"):
+        YamlScenarioSource().load(g, tmp_path)
+
+
+def test_parallel_branch_visits_are_merged():
+    c = _costed()
+    r = _run(c, "gw", [Step(node="fn"), Step(parallel=[[Step(node="table")], [Step(node="sfn"), Step(node="w1")]]),
+                       Step(node="w1")])
+    back = _hop(r, "fn", "w1", nth=-1)
+    assert "response leg" in back.evidence and back.breakdown == {}          # w1 was visited inside the branch
+    assert r.warnings == []
+
+
 def test_monte_carlo_draws_no_cold_start_on_response_legs():
     g, p, price = _costed()
     plan = Planner(g, price, p).plan(Scenario("t", "gw", [Step(node="fn"), Step(node="table"), Step(node="fn")]))
