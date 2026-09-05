@@ -509,11 +509,13 @@ FUNCTIONS: dict[str, Callable[..., Any]] = {
     "reverse": lambda lst: list(reversed(_to_list(lst))),
     "zipmap": _zipmap,
     "trimprefix": lambda s, p: stringify(s).removeprefix(stringify(p)),
-    "trimsuffix": lambda s, x: stringify(s)[:-len(stringify(x))] if stringify(x) and stringify(s).endswith(stringify(x)) else stringify(s),
+    "trimsuffix": lambda s, x: (stringify(s)[:-len(stringify(x))]
+                                if stringify(x) and stringify(s).endswith(stringify(x)) else stringify(s)),
     "trim": lambda s, chars: stringify(s).strip(stringify(chars)),
     "startswith": lambda s, p: stringify(s).startswith(stringify(p)),
     "endswith": lambda s, x: stringify(s).endswith(stringify(x)),
-    "substr": lambda s, offset, length: stringify(s)[int(offset):] if int(length) < 0 else stringify(s)[int(offset):int(offset) + int(length)],
+    "substr": lambda s, offset, length: (stringify(s)[int(offset):] if int(length) < 0
+                                         else stringify(s)[int(offset):int(offset) + int(length)]),
     "strrev": lambda s: stringify(s)[::-1],
     "chomp": lambda s: stringify(s).rstrip("\r\n"),
     "one": lambda lst: (_to_list(lst) or [None])[0],

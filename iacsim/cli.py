@@ -51,7 +51,7 @@ from iacsim.core.interfaces import (
     SCENARIO_SOURCES,
     WALKERS,
 )
-from iacsim.core.registry import load_builtin_plugins, load_external_plugins
+from iacsim.core.registry import load_builtin_plugins, load_entry_points, load_plugins_dir
 
 EXIT_OK, EXIT_PROBLEMS, EXIT_INPUT, EXIT_SOURCE = 0, 1, 2, 3
 
@@ -82,8 +82,10 @@ def _base_dir(target: Path) -> Path:
 
 def _bootstrap(target: Path) -> None:
     load_builtin_plugins()
-    load_external_plugins(target / "plugins")
-    load_external_plugins(Path.cwd() / "plugins")
+    load_entry_points()                       # once per process
+    load_plugins_dir(target / "plugins")
+    if Path.cwd() != target:
+        load_plugins_dir(Path.cwd() / "plugins")
 
 
 def _resolve(target: Path, p: str | Path) -> Path:
@@ -164,11 +166,13 @@ def run(
     walker: str = typer.Option(None, help="expected_value | monte_carlo | load"),
     samples: int = typer.Option(None, help="monte_carlo sample count"),
     seed: int = typer.Option(None, help="monte_carlo random seed (reproducible runs)"),
-    load: str = typer.Option(None, "--load", help="load walker: arrival rates file (default load.yaml next to scenarios.yaml)"),
+    load: str = typer.Option(None, "--load",
+                             help="load walker: arrival rates file (default load.yaml next to scenarios.yaml)"),
     fmt: str = typer.Option(None, "--format", help="force parser: terraform | cloudformation"),
     all_hops: bool = typer.Option(False, "--all-hops", help="show every hop in path order, not just the top-N"),
     output: list[str] = typer.Option(None, "--output", "-o", help="reporters: text | json | markdown (repeatable)"),
-    region: str = typer.Option(None, help="region fallback: CloudFormation templates, or Terraform providers whose region does not resolve"),
+    region: str = typer.Option(None, help="region fallback: CloudFormation templates, or Terraform "
+                                          "providers whose region does not resolve"),
     workspace: str = typer.Option(None, help="value of terraform.workspace (default: default)"),
 ) -> None:
     """Simulate every scenario and print the bottleneck report."""
@@ -178,7 +182,8 @@ def run(
         "latency.profiles": _profiles(target, profile),
         "simulation.walker": walker, "simulation.samples": samples, "simulation.seed": seed,
         "simulation.load": str(_resolve(target, load)) if load else None,
-        "format": fmt, "parsers.cloudformation.region": region, "parsers.terraform.region": region, "parsers.terraform.workspace": workspace,
+        "format": fmt, "parsers.cloudformation.region": region, "parsers.terraform.region": region,
+        "parsers.terraform.workspace": workspace,
         "report.outputs": output or None,
     })
     if cfg.get("simulation.walker") == "load":
@@ -198,7 +203,8 @@ def run(
 def graph(
     target: Path = typer.Argument(..., exists=True, help="Terraform dir or CloudFormation template"),
     fmt: str = typer.Option(None, "--format", help="force parser: terraform | cloudformation"),
-    region: str = typer.Option(None, help="region fallback: CloudFormation templates, or Terraform providers whose region does not resolve"),
+    region: str = typer.Option(None, help="region fallback: CloudFormation templates, or Terraform "
+                                          "providers whose region does not resolve"),
     workspace: str = typer.Option(None, help="value of terraform.workspace (default: default)"),
 ) -> None:
     """Parse + normalise + infer edges; write graph.json. No simulation."""
@@ -206,7 +212,9 @@ def graph(
 
     from iacsim.core import pipeline
     _bootstrap(target)
-    cfg = load_config(_base_dir(target), {"format": fmt, "parsers.cloudformation.region": region, "parsers.terraform.region": region, "parsers.terraform.workspace": workspace})
+    cfg = load_config(_base_dir(target), {"format": fmt, "parsers.cloudformation.region": region,
+                                          "parsers.terraform.region": region,
+                                          "parsers.terraform.workspace": workspace})
     g, _ = pipeline.build_graph(target, cfg)
     out = _out_dir(target, cfg)
     (out / "graph.json").write_text(json.dumps(g.to_dict(), indent=2, default=str))
@@ -222,8 +230,10 @@ def diff(
     after: Path = typer.Argument(..., exists=True, help="Terraform dir or CloudFormation template"),
     profile: list[str] = typer.Option(None, "--profile", "-p", help="latency profile(s), applied to both sides"),
     scenario: str = typer.Option(None, "--scenario", help="compare only this scenario"),
-    align_by: str = typer.Option("id", "--align-by", help="match nodes by id (same format) or label (Terraform vs CloudFormation)"),
-    fail_on_regression: str = typer.Option(None, "--fail-on-regression", help="exit 2 if any total grows more than e.g. 50ms or 10%"),
+    align_by: str = typer.Option("id", "--align-by",
+                                 help="match nodes by id (same format) or label (Terraform vs CloudFormation)"),
+    fail_on_regression: str = typer.Option(None, "--fail-on-regression",
+                                           help="exit 2 if any total grows more than e.g. 50ms or 10%"),
     output: list[str] = typer.Option(None, "--output", "-o", help="reporters: text | json | markdown (repeatable)"),
 ) -> None:
     """Run both snapshots with the same profile and report what changed:
@@ -250,9 +260,11 @@ def diff(
 @_guard
 def validate(
     target: Path = typer.Argument(..., exists=True, help="Terraform dir or CloudFormation template"),
-    strict: bool = typer.Option(False, "--strict", help="exit 1 on any parser/graph warning, not only unwired scenario steps"),
+    strict: bool = typer.Option(False, "--strict",
+                                help="exit 1 on any parser/graph warning, not only unwired scenario steps"),
     fmt: str = typer.Option(None, "--format", help="force parser: terraform | cloudformation"),
-    region: str = typer.Option(None, help="region fallback: CloudFormation templates, or Terraform providers whose region does not resolve"),
+    region: str = typer.Option(None, help="region fallback: CloudFormation templates, or Terraform "
+                                          "providers whose region does not resolve"),
     workspace: str = typer.Option(None, help="value of terraform.workspace (default: default)"),
 ) -> None:
     """Parse, normalise, and check scenarios.yaml — no simulation. Exit 1 when a
@@ -260,7 +272,9 @@ def validate(
     wired to); parser/graph warnings are printed and, with --strict, also fail."""
     from iacsim.core import pipeline
     _bootstrap(target)
-    cfg = load_config(_base_dir(target), {"format": fmt, "parsers.cloudformation.region": region, "parsers.terraform.region": region, "parsers.terraform.workspace": workspace})
+    cfg = load_config(_base_dir(target), {"format": fmt, "parsers.cloudformation.region": region,
+                                          "parsers.terraform.region": region,
+                                          "parsers.terraform.workspace": workspace})
     g, _ = pipeline.build_graph(target, cfg)
     scenarios = pipeline.load_scenarios(g, target, cfg)
     profile = pipeline.load_profile(cfg)
@@ -322,7 +336,8 @@ def calibrate(
     target: Path = typer.Argument(..., exists=True, help="Terraform dir or CloudFormation template"),
     source: str = typer.Option(None, help="metric source: cloudwatch | fake | <plugin> (config: calibrate.source)"),
     window: str = typer.Option(None, help="lookback: 7d | 24h | 30m (config: calibrate.window)"),
-    out: str = typer.Option(None, "--out", help="profile to write (default: <target>/calibrated.yaml; relative = next to the target)"),
+    out: str = typer.Option(None, "--out",
+                            help="profile to write (default: <target>/calibrated.yaml; relative = next to the target)"),
     region: str = typer.Option(None, help="AWS region for the metric source (default: each node's own)"),
     workspace: str = typer.Option(None, help="value of terraform.workspace (default: default)"),
     fmt: str = typer.Option(None, "--format", help="force parser: terraform | cloudformation"),
@@ -342,7 +357,8 @@ def calibrate(
     _bootstrap(target)
     base = _base_dir(target)
     cfg = load_config(base, {"calibrate.source": source, "calibrate.window": window,
-                             "format": fmt, "parsers.cloudformation.region": region, "parsers.terraform.region": region, "parsers.terraform.workspace": workspace})
+                             "format": fmt, "parsers.cloudformation.region": region,
+                             "parsers.terraform.region": region, "parsers.terraform.workspace": workspace})
     name = cfg.get("calibrate.source")
     if region:
         cfg.set(f"calibrate.sources.{name}.region", region)

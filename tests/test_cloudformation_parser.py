@@ -51,7 +51,8 @@ SMALL = {
         }},
         "Api": {"Type": "AWS::ApiGateway::RestApi", "Properties": {"Name": "svc-api"}},
         "Proxy": {"Type": "AWS::ApiGateway::Resource", "Properties": {
-            "RestApiId": {"Ref": "Api"}, "ParentId": {"Fn::GetAtt": ["Api", "RootResourceId"]}, "PathPart": "{proxy+}"}},
+            "RestApiId": {"Ref": "Api"}, "ParentId": {"Fn::GetAtt": ["Api", "RootResourceId"]},
+            "PathPart": "{proxy+}"}},
         "Method": {"Type": "AWS::ApiGateway::Method", "Properties": {
             "RestApiId": {"Ref": "Api"}, "ResourceId": {"Ref": "Proxy"}, "HttpMethod": "ANY",
             "Integration": {"Type": "AWS_PROXY", "Uri": {"Fn::Join": ["", [
@@ -107,7 +108,8 @@ def test_join_select_if_and_warnings(tmp_path):
     assert any("Fn::If" in w and "IsProd" in w for w in raw.warnings)
     assert any("NoDefault" in w for w in raw.warnings)
     integ = by_address(raw)["aws_api_gateway_integration.Method"]
-    assert integ.attrs["uri"] == "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${aws_lambda_function.Fn.arn}/invocations"
+    assert integ.attrs["uri"] == ("arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/"
+                                  "${aws_lambda_function.Fn.arn}/invocations")
 
 
 def test_synthetic_integration_and_attachment(tmp_path):

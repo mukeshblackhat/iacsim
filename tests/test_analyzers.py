@@ -56,7 +56,8 @@ def test_category_shares_sum_to_one_and_carry_layers():
 
 
 def test_category_ignores_off_critical_path_hops_and_reports_parallel_savings():
-    hops = SEQUENTIAL + [_hop("web", "cache", {"distance": 1, "processing": 50}, on_path=False, group="parallel1/branch2")]
+    hops = SEQUENTIAL + [_hop("web", "cache", {"distance": 1, "processing": 50},
+                              on_path=False, group="parallel1/branch2")]
     r = _result(hops, shape={"hop_count": 6, "sequential_hops": 4, "parallel_groups": 1,
                              "parallel_savings_ms": 51.0, "fanout_copies": 0, "wait_ms": 0.0})
     findings = ANALYZERS.get("per_category")().analyse(r, _graph())

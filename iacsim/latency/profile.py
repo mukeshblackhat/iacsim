@@ -6,6 +6,7 @@ key; dicts merge recursively so an override file can be tiny.
 
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 from typing import Any
 
@@ -15,12 +16,20 @@ from iacsim.core.interfaces import PROFILE_SOURCES, ProfileSource
 from iacsim.core.models import Profile
 
 DEFAULTS_PATH = Path(__file__).with_name("defaults.yaml")
+_DEFAULTS_CACHE: tuple[int, dict[str, Any]] | None = None     # (mtime_ns, parsed document)
 
 
 @PROFILE_SOURCES.register("defaults")
 class DefaultsProfileSource(ProfileSource):
     def load(self, spec: str) -> dict[str, Any]:
-        return yaml.safe_load(DEFAULTS_PATH.read_text())
+        """defaults.yaml parsed once per process (re-read if the file changes);
+        every caller gets its own deep copy, so a profile can be edited in place
+        without touching the cache."""
+        global _DEFAULTS_CACHE
+        mtime = DEFAULTS_PATH.stat().st_mtime_ns
+        if _DEFAULTS_CACHE is None or _DEFAULTS_CACHE[0] != mtime:
+            _DEFAULTS_CACHE = (mtime, yaml.safe_load(DEFAULTS_PATH.read_text()))
+        return copy.deepcopy(_DEFAULTS_CACHE[1])
 
 
 @PROFILE_SOURCES.register("yaml_file")

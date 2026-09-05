@@ -23,6 +23,7 @@ A "str" part is either a literal str or a nested AST (an interpolation).
 
 from __future__ import annotations
 
+import functools
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -345,9 +346,18 @@ def parse_attribute(raw: Any) -> AST | None:
     python-hcl2 conventions: literal strings arrive as '"text"' (quotes kept);
     expressions as '${...}'; strings with interpolation as '"a${b}c"'; bare
     words (e.g. `providers = { aws = aws }`) as the word itself.
+
+    Memoised on the raw string: the same expression text (`"${each.value}"`,
+    `"${var.region}"`) is parsed once per process. ASTs are read-only tuples,
+    so callers share them safely.
     """
     if not isinstance(raw, str):
         return None
+    return _parse_attribute_str(raw)
+
+
+@functools.lru_cache(maxsize=4096)
+def _parse_attribute_str(raw: str) -> AST | None:
     if raw.startswith("${"):
         inner, end = _scan_interpolation(raw, 2)
         if end == len(raw):

@@ -68,7 +68,8 @@ class CloudFormationParser(Parser):
         for file in files:
             for raw in self._parse_file(file, warnings):
                 if raw.address in seen:
-                    warnings.append(f"{file.name}: {raw.address} also defined in {seen[raw.address]}; keeping the first")
+                    warnings.append(
+                        f"{file.name}: {raw.address} also defined in {seen[raw.address]}; keeping the first")
                     continue
                 seen[raw.address] = file.name
                 resources.append(raw)
@@ -94,7 +95,8 @@ class CloudFormationParser(Parser):
             attrs = canonical_attrs(ctype, resolve(res.get("Properties") or {}, ctx))
             attrs["cfn_type"] = res.get("Type")
             depends = res.get("DependsOn") or []
-            attrs["depends_on"] = [ctx.address(d) for d in ([depends] if isinstance(depends, str) else depends) if d in ctx.types]
+            names = [depends] if isinstance(depends, str) else depends
+            attrs["depends_on"] = [ctx.address(d) for d in names if d in ctx.types]
             raw = RawResource(address=ctx.address(logical_id), type=ctype, attrs=attrs,
                               region=region, source_file=str(file))
             out.append(raw)

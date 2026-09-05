@@ -95,7 +95,8 @@ def test_module_for_each_and_structured_jsonencode(tmp_path):
             }
             resource "aws_iam_role_policy" "p" {
               role   = "r"
-              policy = jsonencode({ Statement = [{ Action = ["dynamodb:GetItem"], Resource = [for t in module.t : t.arn] }] })
+              policy = jsonencode({ Statement = [{ Action = ["dynamodb:GetItem"],
+                                                   Resource = [for t in module.t : t.arn] }] })
             }
         ''',
         "tbl/main.tf": '''
@@ -208,7 +209,8 @@ def test_registry_modules_are_followed_through_modules_json():
 
 
 def test_region_fallback_option_applies_when_provider_region_is_unresolved(tmp_path):
-    root = _project(tmp_path, {"main.tf": 'variable "r" {}\nprovider "aws" { region = var.r }\nresource "aws_s3_bucket" "b" { bucket = "x" }\n'})
+    root = _project(tmp_path, {"main.tf": 'variable "r" {}\nprovider "aws" { region = var.r }\n'
+                                          'resource "aws_s3_bucket" "b" { bucket = "x" }\n'})
     without = TerraformParser().parse(root)
     assert _by_address(without)["aws_s3_bucket.b"].region is None
     assert any("pass --region" in w for w in without.warnings)
@@ -218,7 +220,9 @@ def test_region_fallback_option_applies_when_provider_region_is_unresolved(tmp_p
 
 
 def test_provisioner_and_connection_blocks_are_skipped(tmp_path):
-    root = _project(tmp_path, {"main.tf": 'provider "aws" { region = "us-east-1" }\nresource "aws_instance" "w" {\n  instance_type = "t3.micro"\n  connection { host = self.public_ip }\n  provisioner "remote-exec" { inline = ["echo hi"] }\n}\n'})
+    root = _project(tmp_path, {"main.tf": 'provider "aws" { region = "us-east-1" }\nresource "aws_instance" "w" {\n'
+                                          '  instance_type = "t3.micro"\n  connection { host = self.public_ip }\n'
+                                          '  provisioner "remote-exec" { inline = ["echo hi"] }\n}\n'})
     result = TerraformParser().parse(root)
     assert result.warnings == []
     assert "connection" not in _by_address(result)["aws_instance.w"].attrs

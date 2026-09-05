@@ -144,7 +144,8 @@ class _Walker:
                     "body": self._flow(body.get("States", {}), body.get("StartAt"), set())}
         if kind == "Parallel":
             return {"state": name, "type": "Parallel",
-                    "branches": [self._flow(b.get("States", {}), b.get("StartAt"), set()) for b in state.get("Branches", [])]}
+                    "branches": [self._flow(b.get("States", {}), b.get("StartAt"), set())
+                                 for b in state.get("Branches", [])]}
         if kind == "Choice":
             nexts = [c.get("Next") for c in state.get("Choices", []) if c.get("Next")]
             if state.get("Default"):
@@ -178,6 +179,7 @@ class _Walker:
         self._seen_targets.add((self.machine, target))
         self.edges.append(Edge(
             self.machine, target, kind, Confidence.HIGH,
-            f"state '{name}' ({state.get('Type')}, {state.get('Resource', '').removeprefix('arn:aws:states:::') or 'direct'}) "
+            f"state '{name}' ({state.get('Type')}, "
+            f"{state.get('Resource', '').removeprefix('arn:aws:states:::') or 'direct'}) "
             f"in {self.source} calls {short(target)}",
         ))

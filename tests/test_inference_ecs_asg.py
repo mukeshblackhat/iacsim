@@ -43,7 +43,8 @@ resource "aws_iam_role_policy" "task" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      { Effect = "Allow", Action = ["dynamodb:PutItem", "dynamodb:GetItem"], Resource = [aws_dynamodb_table.orders.arn] },
+      { Effect = "Allow", Action = ["dynamodb:PutItem", "dynamodb:GetItem"],
+        Resource = [aws_dynamodb_table.orders.arn] },
       { Effect = "Allow", Action = ["sqs:SendMessage"], Resource = [aws_sqs_queue.events.arn] },
     ]
   })

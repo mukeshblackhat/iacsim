@@ -148,12 +148,14 @@ class SaturationAnalyzer(Analyzer):
                     f"concurrency for the heaviest holders so they stop sharing")
         elif st == "lambda":
             new = math.ceil(r["slots"] * need)
-            text = f"raise reserved_concurrent_executions on {key} from {r['slots']:,.0f} → {new:,} for {target:,} users"
+            text = (f"raise reserved_concurrent_executions on {key} from {r['slots']:,.0f} → {new:,} "
+                    f"for {target:,} users")
         elif st == "rds":
             text = (f"instance_class → a class with ≥ {math.ceil(r['slots'] * need):,} max_connections "
                     f"(now {r['slots']:,.0f}), or pool connections in front of it")
         elif st == "dynamodb" and "provisioned" in r["source"]:
-            text = f"raise read_capacity / write_capacity to ≥ {math.ceil(r['rps'] * need):,} units (now {r['rps']:,.0f})"
+            text = (f"raise read_capacity / write_capacity to ≥ {math.ceil(r['rps'] * need):,} units "
+                    f"(now {r['rps']:,.0f})")
         elif st in ("ec2", "fargate"):
             text = f"scale instances / desired_count by ×{need:.1f} on {key}"
         else:

@@ -59,7 +59,8 @@ class RecommendationsAnalyzer(Analyzer):
                 saving,
                 f"{self._name(dst)} is in {region_of(self.graph, dst)} but its caller {self._name(src)} is in "
                 f"{region_of(self.graph, src)}; {len(group)} call(s) each pay the cross-region round-trip. "
-                f"Moving it to {region_of(self.graph, src)} leaves ~{2 * CROSS_AZ_LEG_MS:g} ms of cross-AZ distance per call",
+                f"Moving it to {region_of(self.graph, src)} leaves ~{2 * CROSS_AZ_LEG_MS:g} ms "
+                "of cross-AZ distance per call",
                 group))
         return out
 
@@ -107,7 +108,8 @@ class RecommendationsAnalyzer(Analyzer):
                 out.append(self._finding(
                     f"run the {len(run)} reads from {self._name(run[0].src)} in parallel",
                     sum(ms) - max(ms),
-                    f"{self._name(run[0].src)} calls {', '.join(self._name(t) for t in dict.fromkeys(h.dst for h in run))} "
+                    f"{self._name(run[0].src)} calls "
+                    f"{', '.join(self._name(t) for t in dict.fromkeys(h.dst for h in run))} "
                     f"one after another and nothing in the scenario says one depends on the other; "
                     f"issuing them concurrently costs only the slowest ({max(ms):,.0f} ms)",
                     list(run)))

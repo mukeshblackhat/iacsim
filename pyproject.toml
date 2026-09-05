@@ -3,6 +3,9 @@ name = "iacsim"
 version = "0.1.0"
 description = "Infrastructure-as-Code → latency simulation. Reads Terraform / CloudFormation, builds an infra graph, simulates request latency, ranks bottlenecks."
 requires-python = ">=3.12"
+license = {text = "MIT"}
+readme = "README.md"
+authors = [{name = "Mukesh Bishnoi"}]
 dependencies = [
   "python-hcl2>=4.3",
   "typer>=0.12",
@@ -13,7 +16,11 @@ dependencies = [
 [project.optional-dependencies]
 calibrate = ["boto3>=1.34"]          # only needed for `iacsim calibrate` (M7)
 montecarlo = ["numpy>=1.26"]         # only needed for --walker monte_carlo (M6)
-dev = ["pytest>=8", "pytest-cov", "ruff"]
+dev = ["pytest>=8", "pytest-cov", "ruff", "numpy>=1.26"]   # numpy so the Monte-Carlo fast path is tested
+
+[project.urls]
+Homepage = "https://github.com/mukeshblackhat/iacsim"
+Repository = "https://github.com/mukeshblackhat/iacsim"
 
 [project.scripts]
 iacsim = "iacsim.cli:app"
@@ -22,7 +29,10 @@ iacsim = "iacsim.cli:app"
 [project.entry-points."iacsim.plugins"]
 
 [tool.ruff]
-line-length = 100
+line-length = 120
+
+[tool.ruff.lint]
+extend-select = ["E501", "B"]   # long lines and bugbear on top of the defaults (E4, E7, E9, F)
 
 [tool.ruff.lint.per-file-ignores]
 "iacsim/cli.py" = ["B008"]   # typer.Option/Argument in defaults is the typer idiom
@@ -35,7 +45,8 @@ build-backend = "setuptools.build_meta"
 include = ["iacsim*"]
 
 [tool.setuptools.package-data]
-iacsim = ["latency/defaults.yaml", "viewer/index.html"]
+"iacsim.latency" = ["defaults.yaml"]
+"iacsim.viewer" = ["index.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

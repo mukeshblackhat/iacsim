@@ -19,7 +19,8 @@ graph viewer (M6). Schema version 2:
           "findings": {
             "per_hop":         [Finding...],   # subject = hop label
             "per_node":        [Finding...],   # subject = node id
-            "per_category":    [Finding...],   # subject = distance|processing|cold_start|wait|service|parallel_savings|hops|fanout
+            "per_category":    [Finding...],   # subject = distance|processing|cold_start|wait|service|
+                                               #           parallel_savings|hops|fanout
             "critical_path":   [Finding...],   # only when parallel_groups > 0
             "recommendations": [Finding...],   # latency_ms = estimated saving
             "tail_risk":       [Finding...]    # only when sampled; latency_ms = p99 − p50
@@ -35,7 +36,8 @@ graph viewer (M6). Schema version 2:
                                               # thresholds, assumptions, first_to_break) — the viewer / diff read this
     }
 
-    Finding = {analyzer, subject, latency_ms, share, detail, refs: [hop labels], layer: A1|A2|A3|capacity|null, additive}
+    Finding = {analyzer, subject, latency_ms, share, detail, refs: [hop labels],
+               layer: A1|A2|A3|capacity|null, additive}
 
 Stable keys for `diff` to align on: scenario `name`; hop `label` (+ path index);
 per_node `subject`; per_category `subject`; recommendation `subject`.

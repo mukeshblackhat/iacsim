@@ -4,12 +4,14 @@
 PY := .venv/bin/python
 COV_MIN := 85
 
-.PHONY: check test lint cov examples hooks
+.PHONY: check test lint cov examples hooks ci
 
 check: lint test cov          ## lint + tests + coverage gate
 
+ci: check examples            ## what GitHub Actions runs
+
 lint:
-	.venv/bin/ruff check iacsim tests
+	.venv/bin/ruff check iacsim tests   # line length + rule set come from pyproject.toml
 
 test:
 	.venv/bin/pytest -q

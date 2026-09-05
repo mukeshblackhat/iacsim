@@ -4,7 +4,11 @@ Reads Terraform (or CloudFormation), builds a graph of your infrastructure,
 simulates a request through it, and tells you where the milliseconds go —
 before you deploy. See `SPEC.md` for the design, `DECISIONS.md` for every choice and why,
 `CODE_FLOW.md` for what calls what, `TIMELINE.md` for status and
-milestones, and `problem statment.md` for the why.
+milestones, `problem-statement.md` for the why, and `CONTRIBUTING.md` before sending a change.
+MIT licensed (`LICENSE`).
+
+**Status:** M0–M8 built; a deep-look hardening pass is in progress (see `TIMELINE.md`, 2026-09-05).
+CI (`.github/workflows/ci.yml`) runs `make check` + `make examples` on Python 3.12 and 3.13.
 
 ```
 pip install -e ".[dev]"
@@ -13,7 +17,7 @@ iacsim graph examples/classic-web    # M1
 iacsim run   examples/classic-web    # M2+
 iacsim run   examples/foosh-serverless --walker load --profile examples/foosh-serverless/calibrated.yaml   # M8: users until it breaks
 iacsim diff  examples/classic-web examples/classic-web-bad   # M4
-iacsim calibrate examples/foosh-serverless                     # M7 — measured numbers → calibrated.yaml: what moved, A1/A2/A3 shift, changed hops
+iacsim calibrate examples/foosh-serverless                     # M7 — measured numbers → calibrated.yaml (then --profile calibrated.yaml)
 iacsim diff  ./main ./pr --fail-on-regression 50ms           # CI: exit 2 if any scenario grows > 50 ms (or 10%)
 iacsim diff  ./before ./after --scenario checkout -o markdown  # one scenario, PR-comment markdown → .iacsim/diff.md
 iacsim run   examples/foosh-serverless --walker monte_carlo --samples 10000 --seed 1   # M6: p50/p95/p99 + tail risk
@@ -22,6 +26,16 @@ iacsim run   examples/foosh-serverless --scenario poll_status  # only the named 
 iacsim validate ./infra --strict                             # exit 1 on any parser warning, not only unwired steps
 iacsim --version
 ```
+
+## One edge per pair, every operation remembered
+
+Rules often find more than one thing about the same pair — an env var says a Lambda *knows* a
+table, an IAM statement says it may *read and write* it. iacsim keeps **one edge per
+`src → dst`** with `ops` = every operation any rule found evidence for, prices the
+highest-priority one (`invoke > route > consume > publish > read > write`; a request path reads
+by default), and says so in the hop evidence: *"(also may write: use op: write)"*. A scenario
+step re-prices with `- { node: …, op: write }`. The result is the same graph whichever rule
+runs first, and the Terraform twin of the Foosh stack now matches the real CDK template exactly.
 
 ## Real-world Terraform
 
@@ -206,7 +220,7 @@ iacsim/
   scenarios/     yaml_file.py  inferred.py            → [Scenario]
   latency/       defaults.yaml  profile.py  rules/  calibrate/{calibrator,writer,fake,cloudwatch,cloudwatch_queries}.py
   simulator/     traversal.py (shared planner + evaluator)  walkers/expected_value.py  monte_carlo.py
-  analyzer/      per_hop  per_node  per_category  critical_path  recommendations  tail_risk  saturation  recommendations  tail_risk
+  analyzer/      per_hop  per_node  per_category  critical_path  recommendations  tail_risk  saturation
   reporter/      text  markdown  json
   viewer/        index.html (self-contained graph viewer) + serve helpers
   cli.py  differ.py

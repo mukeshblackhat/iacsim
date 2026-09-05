@@ -112,8 +112,10 @@ def _graph():
     g.add_node(Node("bg", NodeKind.COMPUTE, "lambda", us, label="bg"))                 # unreserved
     g.add_node(Node("db", NodeKind.DATASTORE, "rds", us, attrs={"instance_class": "db.t3.medium"}, label="db"))
     g.add_node(Node("t", NodeKind.DATASTORE, "dynamodb", us, attrs={"billing_mode": "PAY_PER_REQUEST"}, label="t"))
-    g.add_node(Node("tp", NodeKind.DATASTORE, "dynamodb", us, attrs={"read_capacity": 100, "write_capacity": 50}, label="tp"))
-    g.add_node(Node("web", NodeKind.COMPUTE, "ec2", us, attrs={"instance_type": "t3.medium", "instances": 1}, label="web"))
+    g.add_node(Node("tp", NodeKind.DATASTORE, "dynamodb", us,
+                    attrs={"read_capacity": 100, "write_capacity": 50}, label="tp"))
+    g.add_node(Node("web", NodeKind.COMPUTE, "ec2", us,
+                    attrs={"instance_type": "t3.medium", "instances": 1}, label="web"))
     g.add_node(Node("svc", NodeKind.COMPUTE, "fargate", us, attrs={"instances": 3}, label="svc"))
     for src, dst, kind, ms in [("internet", "gw", EdgeKind.INVOKE, 30.0), ("gw", "fn", EdgeKind.INVOKE, 20.0),
                                ("fn", "db", EdgeKind.READ, 5.0), ("fn", "t", EdgeKind.READ, 4.0),
@@ -215,8 +217,10 @@ def test_fanout_erlangs_scale_with_copies_not_waves():
     assert r.shape["fanout_waves"] == 4                                         # 2 + 2: latency pays waves
     util = r.load["utilisation"][1]
     pool = r.load["resources"][cap.UNRESERVED_POOL]
-    assert util[cap.UNRESERVED_POOL] == pytest.approx(1.0 * 10 * 0.100 / pool["slots"], rel=1e-3)   # λ·copies·hold/slots
-    assert util["t"] == pytest.approx(1.0 * 10 / 40000, abs=5e-5)               # rps-capped: λ·copies/rps (stored to 4 dp)
+    # λ·copies·hold/slots
+    assert util[cap.UNRESERVED_POOL] == pytest.approx(1.0 * 10 * 0.100 / pool["slots"], rel=1e-3)
+    # rps-capped: λ·copies/rps (stored to 4 dp)
+    assert util["t"] == pytest.approx(1.0 * 10 / 40000, abs=5e-5)
 
 
 def test_reserved_concurrency_zero_is_throttled_off():
@@ -310,14 +314,16 @@ def test_while_running_uses_littles_law():
     from iacsim.simulator.walkers.load import _rates_per_user
     g = _orchestrated_graph(5)
     g.add_node(Node("gw", NodeKind.GATEWAY, "api_gateway"))
-    e = Edge("gw", "sm", EdgeKind.INVOKE, Confidence.DECLARED, "t"); e.latency = Latency(1.0, breakdown={"processing": 1.0})
+    e = Edge("gw", "sm", EdgeKind.INVOKE, Confidence.DECLARED, "t")
+    e.latency = Latency(1.0, breakdown={"processing": 1.0})
     g.add_edge(e)
     planner = Planner(g, None)
     walker = WALKERS.get("load")()
     planned = {
         "start": walker._plan(Scenario("start", "gw", [Step(node="sm")]), planner, g),
         "poll": walker._plan(Scenario("poll", "gw", []), planner, g),
-        "run": walker._plan(Scenario("run", "sm", [Step(fanout=("w", 1000))]), planner, g),   # 200 waves × 100 ms = 20 s
+        # 200 waves × 100 ms = 20 s
+        "run": walker._plan(Scenario("run", "sm", [Step(fanout=("w", 1000))]), planner, g),
     }
     load = LoadProfile(users=[1], per_user=[PerUser("start", 100.0), PerUser("poll", 1.0, while_running=True)],
                        workflow_mix=[("run", 1.0)])

@@ -111,9 +111,11 @@ def make_pricer(graph: InfraGraph, profile: Profile, cfg: Config) -> Callable[[E
     return price
 
 
-def cost_graph(graph: InfraGraph, profile: Profile, cfg: Config) -> None:
-    """Stage 4b: every edge gets a Latency from the enabled cost rules."""
-    price = make_pricer(graph, profile, cfg)
+def cost_graph(graph: InfraGraph, profile: Profile, cfg: Config,
+               price: Callable[[Edge], Latency] | None = None) -> None:
+    """Stage 4b: every edge gets a Latency from the enabled cost rules.
+    `run()` builds the pricer once and shares it with `simulate`."""
+    price = price or make_pricer(graph, profile, cfg)
     for edge in graph.edges:
         edge.latency = price(edge)
 
@@ -132,12 +134,12 @@ def load_scenarios(graph: InfraGraph, target: Path, cfg: Config) -> list[Scenari
 
 
 def simulate(graph: InfraGraph, scenarios: list[Scenario], cfg: Config, profile: Profile,
-             root: Path | None = None) -> list[Result]:
+             root: Path | None = None, price: Callable[[Edge], Latency] | None = None) -> list[Result]:
     """Stage 6. The walker receives `price` so it can cost synthetic hops, and
     the full scenario list + `root` so the `load` walker can share resources
     across scenarios and find load.yaml next to scenarios.yaml."""
     walker = WALKERS.get(cfg.get("simulation.walker"))()
-    price = make_pricer(graph, profile, cfg)
+    price = price or make_pricer(graph, profile, cfg)
     return [walker.run(graph, s, price=price, profile=profile,
                        samples=cfg.get("simulation.samples"), seed=cfg.get("simulation.seed"),
                        scenarios=scenarios, root=root, load=cfg.get("simulation.load"),
@@ -180,11 +182,12 @@ def run(target: Path, cfg: Config, only: list[str] | None = None) -> PipelineOut
     (`--scenario`); an unknown name is a ValueError with a did-you-mean hint."""
     graph, _raw = build_graph(target, cfg)
     profile = load_profile(cfg)
-    cost_graph(graph, profile, cfg)
+    price = make_pricer(graph, profile, cfg)          # built once; costing and the walker share it
+    cost_graph(graph, profile, cfg, price=price)
     scenarios = load_scenarios(graph, target, cfg)
     if only:
         scenarios = _select_scenarios(scenarios, only)
     root = target if target.is_dir() else target.parent
-    results = simulate(graph, scenarios, cfg, profile, root=root)
+    results = simulate(graph, scenarios, cfg, profile, root=root, price=price)
     findings = analyse(results, graph, profile, cfg, scenarios)
     return PipelineOutput(graph, scenarios, results, findings, profile)

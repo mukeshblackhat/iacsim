@@ -96,8 +96,10 @@ class BriefBuilder:
             title="users until it breaks",
             subtitle="analytic M/M/c per resource; utilisation is linear in users, so the break point is exact",
             meta=[("users", ", ".join(f"{u:,}" for u in users)),
-                  ("thresholds", f"p99 {load.get('thresholds', {}).get('p99_ms', 0):,.0f} ms · utilisation {threshold:.0%}"),
-                  ("tail factor", f"{load.get('tail_factor', 1.3):g} × no-contention expected (simulation.tail_factor)"),
+                  ("thresholds",
+                   f"p99 {load.get('thresholds', {}).get('p99_ms', 0):,.0f} ms · utilisation {threshold:.0%}"),
+                  ("tail factor",
+                   f"{load.get('tail_factor', 1.3):g} × no-contention expected (simulation.tail_factor)"),
                   ("assumes", "; ".join(load.get("assumptions", [])))],
             sections=[s for s in sections if s.rows],
         )
@@ -245,7 +247,8 @@ class BriefBuilder:
             return ""
         parts = [f"{int(shape.get('hop_count', 0))} hops"]
         if shape.get("parallel_groups"):
-            parts.append(f"{int(shape['parallel_groups'])} parallel group(s) saving {shape['parallel_savings_ms']:,.1f} ms")
+            parts.append(f"{int(shape['parallel_groups'])} parallel group(s) "
+                         f"saving {shape['parallel_savings_ms']:,.1f} ms")
         if shape.get("fanout_copies"):
             parts.append(f"fan-out ×{int(shape['fanout_copies'])} costed once")
         if shape.get("wait_ms"):

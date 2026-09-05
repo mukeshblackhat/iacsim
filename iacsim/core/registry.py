@@ -65,19 +65,65 @@ class Registry[T]:
 
 # --------------------------------------------------------------- discovery
 
+# Every package whose import registers built-ins. Listed explicitly (instead of
+# walking the whole `iacsim` tree) so start-up imports only what registers
+# something: `iacsim.viewer` (http, ssl, webbrowser) is imported by `iacsim view`
+# alone. tests/test_registry_smoke.py proves the list is complete by comparing
+# the registries against a full walk.
+BUILTIN_MODULES = (
+    "iacsim.parsers.terraform",
+    "iacsim.parsers.cloudformation",
+    "iacsim.graph.normalisers",
+    "iacsim.graph.inference",
+    "iacsim.scenarios",
+    "iacsim.latency.profile",
+    "iacsim.latency.rules",
+    "iacsim.latency.calibrate",
+    "iacsim.simulator",
+    "iacsim.analyzer",
+    "iacsim.reporter",
+)
+
+_entry_points_loaded = False
+
+
 def load_builtin_plugins() -> None:
-    """Import every built-in package so their @register decorators run."""
+    """Import the built-in packages so their @register decorators run."""
+    for name in BUILTIN_MODULES:
+        importlib.import_module(name)
+
+
+def walk_all_modules() -> list[str]:
+    """Every module under `iacsim`, imported — the slow, exhaustive form used by
+    the smoke test to prove BUILTIN_MODULES misses nothing."""
     import iacsim
-    for module_info in pkgutil.walk_packages(iacsim.__path__, prefix="iacsim."):
-        importlib.import_module(module_info.name)
+    names = [m.name for m in pkgutil.walk_packages(iacsim.__path__, prefix="iacsim.")]
+    for name in names:
+        importlib.import_module(name)
+    return names
+
+
+def load_entry_points() -> None:
+    """Load plugins published through the `iacsim.plugins` entry-point group — once per process."""
+    global _entry_points_loaded
+    if _entry_points_loaded:
+        return
+    for entry_point in importlib.metadata.entry_points(group="iacsim.plugins"):
+        entry_point.load()
+    _entry_points_loaded = True
+
+
+def load_plugins_dir(plugins_dir: Path | None) -> None:
+    """Import every module in a local ./plugins directory (a drop-in extension point)."""
+    if plugins_dir and plugins_dir.is_dir():
+        path = str(plugins_dir)
+        if path not in sys.path:
+            sys.path.insert(0, path)
+        for module_info in pkgutil.iter_modules([path]):
+            importlib.import_module(module_info.name)
 
 
 def load_external_plugins(plugins_dir: Path | None = None) -> None:
-    """Import plugins from the entry-point group and from a local ./plugins directory."""
-    for entry_point in importlib.metadata.entry_points(group="iacsim.plugins"):
-        entry_point.load()
-
-    if plugins_dir and plugins_dir.is_dir():
-        sys.path.insert(0, str(plugins_dir))
-        for module_info in pkgutil.iter_modules([str(plugins_dir)]):
-            importlib.import_module(module_info.name)
+    """Entry points + a plugins directory (kept for callers of the old single function)."""
+    load_entry_points()
+    load_plugins_dir(plugins_dir)

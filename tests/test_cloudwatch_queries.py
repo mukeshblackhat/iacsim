@@ -25,7 +25,8 @@ def test_queries_carry_the_right_namespace_dimensions_and_stats():
                                               "Dimensions": [{"Name": "FunctionName", "Value": "my-fn"}]}
     assert lam[3]["MetricStat"]["Stat"] == "SampleCount" and lam[4]["MetricStat"]["Stat"] == "Sum"
     ddb = q.queries_for("dynamodb", "orders", 60)
-    assert {x["MetricStat"]["Metric"]["Dimensions"][1]["Value"] for x in ddb} == {"GetItem", "Query", "PutItem", "UpdateItem"}
+    ops = {x["MetricStat"]["Metric"]["Dimensions"][1]["Value"] for x in ddb}
+    assert ops == {"GetItem", "Query", "PutItem", "UpdateItem"}
     assert q.queries_for("rds", "pg", 60)[0]["MetricStat"]["Metric"]["Namespace"] == "AWS/RDS"
     assert q.queries_for("alb", "web", 60)[0]["MetricStat"]["Metric"]["MetricName"] == "TargetResponseTime"
     assert [x["Id"] for x in q.queries_for("api_gateway", "api", 60)] == ["latency", "integration"]
@@ -50,7 +51,8 @@ def test_lambda_measurement_arithmetic():
 
 
 def test_datastore_and_traffic_measurements_with_unit_conversion():
-    assert q.to_measurement("dynamodb", {"lat_getitem": [2, 4], "lat_query": [6], "lat_putitem": [8]}) == {"read": 4.5, "write": 8}
+    series = {"lat_getitem": [2, 4], "lat_query": [6], "lat_putitem": [8]}
+    assert q.to_measurement("dynamodb", series) == {"read": 4.5, "write": 8}
     assert q.to_measurement("dynamodb", {"lat_query": [3]}) == {"read": 3}
     assert q.to_measurement("dynamodb", {"lat_getitem": []}) is None
     assert q.to_measurement("rds", {"read_s": [0.004, 0.006], "write_s": [0.01]}) == {"read": 5, "write": 10}

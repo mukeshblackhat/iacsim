@@ -1,6 +1,6 @@
 # IaC Latency Simulator — Spec
 
-> Status: **v1 AGREED** (2026-09-04) — all 7 open questions resolved in section 12. Future changes: add a row to the decisions log, then update the section it affects.
+> Status: **v1 AGREED** (2026-09-04); M0–M8 built; deep-look pass in progress (2026-09-05). Every decision, including the ones made after this spec, is logged in `DECISIONS.md`. Future changes: add a row there, then update the section here it affects.
 
 ---
 
@@ -51,9 +51,12 @@ trace-driven) only if needed.
 An engineer with a Terraform repo runs:
 
 ```
+iacsim graph ./infra                      # parse + map only → .iacsim/graph.json
+iacsim validate ./infra [--strict]        # parse, map, check scenarios.yaml; exit 1 on problems
 iacsim run ./infra                        # simulate current infra
 iacsim run ./infra --scenario checkout    # simulate a named request path
-iacsim diff ./infra-before ./infra-after  # compare two versions
+iacsim diff ./infra-before ./infra-after  # compare two versions (--fail-on-regression 50ms → exit 2)
+iacsim plugins                            # every registered implementation, per extension point
 iacsim run ./infra --profile measured.yaml  # use measured latency numbers
 iacsim calibrate ./infra [--source cloudwatch|fake] [--window 7d] [--out measured.yaml] [--dry-run]   # measured numbers → profile (rung 2)
 iacsim run ./infra --walker monte_carlo --samples 10000 --seed 1   # (M6) p50/p95/p99 + tail risk
@@ -76,7 +79,7 @@ and gets a report: total latency, ranked bottleneck list, and per-hop breakdown.
 
 ### Out of scope (v1)
 - Non-AWS providers (GCP, Azure) — the graph is provider-neutral, but only AWS parsers are built.
-- Load/throughput modelling (queueing under contention). We model latency of a single request, not saturation.
+- Discrete-event load simulation (burstiness, warm-up transients). M8's `load` walker models contention analytically (M/M/c per resource) and names what breaks first; a full event-driven simulator is parked.
 - Live *tracing* (X-Ray per-hop timings). Aggregate metrics via `iacsim calibrate` are in (M7).
 - Application code analysis (we don't read Lambda source to figure out what it calls).
 - Reading CDK / Pulumi source directly (Q5) — run `cdk synth` yourself and point the tool at `cdk.out/`.
@@ -193,7 +196,9 @@ Node
 
 Edge
   src, dst    node ids
-  kind        invoke | read | write | route | publish | consume | peer
+  kind        invoke | read | write | route | publish | consume | peer   # the operation that is priced
+  ops         [read, write]                     # every operation any rule found evidence for (one edge per src→dst;
+                                                # a scenario step's `op:` re-prices the hop with another of these)
   evidence    "env var TABLE_NAME → aws_dynamodb_table.orders"   # why we think this edge exists
   latency     { expected, p50, p99, dist }       # filled in by latency model; `expected` used by
                                                  # the deterministic walker, the rest by Monte-Carlo (Q6)
@@ -296,7 +301,7 @@ The source is company-specific: `calibrate.source` picks a registered `MetricSou
 ```
 IAC/
   SPEC.md                    # this file
-  problem statment.md
+  problem-statement.md
   iacsim/                    # python package — one folder per pipeline stage, one file per implementation
     core/        registry.py  models.py (IR)  interfaces.py (ABCs + registries)  config.py  pipeline.py
     parsers/     detect.py  terraform/{hcl_expr,evaluator,loader,parser}.py  cloudformation/parser.py
@@ -365,7 +370,7 @@ Questions are asked one at a time. Each answer gets recorded here and the sectio
 
 | # | Question | Decision | Rationale |
 |---|---|---|---|
-| Q1 | Language / stack | **Python 3.12** — `python-hcl2` (Terraform parsing), `networkx` (graph), `typer` (CLI), `pyyaml`, `pytest` | Fastest to prototype; strongest HCL library outside Go (TS options are thin or wrap a Go binary); `networkx`/`numpy` for graph + simulation math; Foosh infra is Python CDK. TypeScript was considered and rejected for v1 — it only wins if the engine must run in-browser, which the JSON-viewer plan avoids |
+| Q1 | Language / stack | **Python 3.12** — `python-hcl2` (Terraform parsing), `typer` (CLI), `pyyaml`, `rich`, `pytest`; `numpy` optional (Monte-Carlo) | Fastest to prototype; strongest HCL library outside Go (TS options are thin or wrap a Go binary); the graph is plain dataclasses (`networkx` was planned and dropped as unused); Foosh infra is Python CDK. TypeScript was considered and rejected for v1 — it only wins if the engine must run in-browser, which the JSON-viewer plan avoids |
 | Q2 | Interface | **CLI + JSON first; web graph viewer later (M6)** | `graph.json` / `report.json` are the contract, so a viewer can be bolted on without touching the engine |
 | Q3 | Request paths | **Infer from IaC evidence + optional `scenarios.yaml` overrides** | Works out of the box on a fresh repo; engineer only writes scenarios to pin exact paths or fix wrong guesses. Every inferred hop carries an `evidence` string so wrong guesses are visible and correctable |
 | Q4 | Latency numbers | **Build defaults + `--profile` override now (v1); design the profile format and module layout so `iacsim calibrate` (pull real numbers from CloudWatch) slots in later (M7)** | Comparative results are fine with public defaults; measured numbers make it trustworthy. Calibration needs AWS creds so it stays optional and separate |

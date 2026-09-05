@@ -150,14 +150,30 @@ class InfraGraph:
     warnings: list[str] = field(default_factory=list)
     schema_version: str = SCHEMA_VERSION
 
+    # Lookup indexes, built lazily and kept out of the dataclass fields so they
+    # never reach graph.json (`asdict`) or equality. `add_node` / `add_edge` are
+    # the only mutation points and keep them in step.
+    def __post_init__(self) -> None:
+        self._edge_index: dict[tuple[str, str], Edge] | None = None
+        self._label_counts: dict[str, int] | None = None
+
     def add_node(self, node: Node) -> None:
         self.nodes[node.id] = node
+        self._label_counts = None
 
     def add_edge(self, edge: Edge) -> None:
         self.edges.append(edge)
+        if self._edge_index is not None:
+            self._edge_index.setdefault((edge.src, edge.dst), edge)
 
     def find_edge(self, src: str, dst: str) -> Edge | None:
-        return next((e for e in self.edges if e.src == src and e.dst == dst), None)
+        """The first edge src → dst, O(1) after the first call."""
+        if self._edge_index is None or len(self._edge_index) > len(self.edges):
+            index: dict[tuple[str, str], Edge] = {}
+            for e in self.edges:
+                index.setdefault((e.src, e.dst), e)
+            self._edge_index = index
+        return self._edge_index.get((src, dst))
 
     def nodes_of_kind(self, kind: NodeKind) -> list[Node]:
         return [n for n in self.nodes.values() if n.kind == kind]
@@ -166,7 +182,13 @@ class InfraGraph:
         """A node's label when no other node shares it, else a shortened id:
         `module.compute.aws_instance.this["a"]` → `compute.instance["a"]`."""
         node = self.nodes.get(node_id)
-        if node and node.label and sum(1 for n in self.nodes.values() if n.label == node.label) == 1:
+        if self._label_counts is None or len(self._label_counts) == 0 and self.nodes:
+            counts: dict[str, int] = {}
+            for n in self.nodes.values():
+                if n.label:
+                    counts[n.label] = counts.get(n.label, 0) + 1
+            self._label_counts = counts
+        if node and node.label and self._label_counts.get(node.label) == 1:
             return node.label
         short = node_id.replace("module.", "").replace(".aws_", ".")
         return short[:-5] if short.endswith(".this") else short.replace(".this[", "[")
@@ -488,12 +510,12 @@ class DiffReport:
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
-        for s, sd in zip(self.scenarios, d["scenarios"]):
+        for s, sd in zip(self.scenarios, d["scenarios"], strict=True):
             sd["delta_ms"] = s.delta_ms
             sd["delta_pct"] = s.delta_pct
-            for h, hd in zip(s.hops, sd["hops"]):
+            for h, hd in zip(s.hops, sd["hops"], strict=True):
                 hd["status"], hd["delta_ms"] = h.status, h.delta_ms
-            for v, vd in zip([*s.categories, *s.nodes], [*sd["categories"], *sd["nodes"]]):
+            for v, vd in zip([*s.categories, *s.nodes], [*sd["categories"], *sd["nodes"]], strict=True):
                 vd["status"], vd["delta_ms"] = v.status, v.delta_ms
         return d
 

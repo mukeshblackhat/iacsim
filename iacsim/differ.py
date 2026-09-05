@@ -175,8 +175,8 @@ def diff_hops(before: list[HopResult], after: list[HopResult]) -> list[HopDelta]
     """Align by (label, occurrence). Output order: after-side path order, then
     removed hops in before-side path order."""
     b_keys, a_keys = _occurrence_keys(before), _occurrence_keys(after)
-    b_index = {k: (i, h) for i, (k, h) in enumerate(zip(b_keys, before), 1)}
-    a_index = {k: (i, h) for i, (k, h) in enumerate(zip(a_keys, after), 1)}
+    b_index = {k: (i, h) for i, (k, h) in enumerate(zip(b_keys, before, strict=True), 1)}
+    a_index = {k: (i, h) for i, (k, h) in enumerate(zip(a_keys, after, strict=True), 1)}
 
     def make(k) -> HopDelta:
         b, a = b_index.get(k), a_index.get(k)

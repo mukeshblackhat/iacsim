@@ -35,7 +35,8 @@ def test_merge_keeps_every_op_prices_the_read_and_lifts_confidence():
     index = {}
     _merge_edge(g, index, Edge("fn", "t", EdgeKind.WRITE, Confidence.MEDIUM, "iam grants PutItem", rule="iam_policy"))
     _merge_edge(g, index, Edge("fn", "t", EdgeKind.READ, Confidence.HIGH, "env TABLE_NAME", rule="env_var"))
-    _merge_edge(g, index, Edge("fn", "t", EdgeKind.READ, Confidence.LOW, "again", rule="env_var"))   # same rule twice: no-op
+    # same rule twice: no-op
+    _merge_edge(g, index, Edge("fn", "t", EdgeKind.READ, Confidence.LOW, "again", rule="env_var"))
     assert len(g.edges) == 1
     e = g.edges[0]
     assert e.kind == EdgeKind.READ and e.ops == [EdgeKind.READ, EdgeKind.WRITE]

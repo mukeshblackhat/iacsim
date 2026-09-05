@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import math
 import random
+import sys
 from typing import Any
 
 from iacsim.core.interfaces import WALKERS, Walker
@@ -50,7 +51,8 @@ class MonteCarloWalker(Walker):
         sampler = make_sampler(samples, options.get("seed"))
         backend = MonteCarloBackend(graph, options.get("profile"), sampler)
         ev = evaluate(plan, backend)
-        percentiles = {f"p{q}": round(v, 3) for q, v in zip(PERCENTILES, sampler.percentiles(ev.total, PERCENTILES))}
+        values = sampler.percentiles(ev.total, PERCENTILES)
+        percentiles = {f"p{q}": round(v, 3) for q, v in zip(PERCENTILES, values, strict=True)}
         return build_result(plan, ev, backend, walker="monte_carlo", percentiles=percentiles, samples=samples)
 
 
@@ -59,6 +61,7 @@ class MonteCarloBackend:
 
     def __init__(self, graph: InfraGraph, profile: Profile | None, sampler: Sampler) -> None:
         self.graph, self.profile, self.s = graph, profile, sampler
+        self._blocks: dict[str, dict[str, Any]] = {}          # node id → merged processing block
         variance = profile.variance if profile else {}
         self.distance_sigma = float(variance.get("distance_sigma", DEFAULT_DISTANCE_SIGMA))
         self.processing_sigma = float(variance.get("processing_sigma", DEFAULT_PROCESSING_SIGMA))
@@ -96,8 +99,12 @@ class MonteCarloBackend:
         return self.s.constant(ms)
 
     def _processing_block(self, node_id: str) -> dict[str, Any]:
-        node = self.graph.nodes.get(node_id)
-        return self.profile.processing_for(node) if (node and self.profile) else {}
+        block = self._blocks.get(node_id)
+        if block is None:
+            node = self.graph.nodes.get(node_id)
+            block = self.profile.processing_for(node) if (node and self.profile) else {}
+            self._blocks[node_id] = block
+        return block
 
     def _processing_sigma(self, node_id: str) -> float:
         return float(self._processing_block(node_id).get("sigma", self.processing_sigma))
@@ -127,11 +134,19 @@ class Sampler:
     def percentiles(self, value, qs) -> list[float]: ...
 
 
+NUMPY_TIP = "tip: pip install 'iacsim[montecarlo]' — numpy makes 10k samples ~50× faster"
+_tip_shown = False
+
+
 def make_sampler(n: int, seed: int | None) -> Sampler:
+    global _tip_shown
     try:
         import numpy  # noqa: F401
         return NumpySampler(n, seed)
     except ImportError:
+        if n >= 2000 and not _tip_shown:
+            print(NUMPY_TIP, file=sys.stderr)
+            _tip_shown = True
         return PythonSampler(n, seed)
 
 
@@ -174,10 +189,10 @@ class Vec:
         self.v = values
 
     def __add__(self, other: Vec) -> Vec:
-        return Vec([a + b for a, b in zip(self.v, other.v)])
+        return Vec([a + b for a, b in zip(self.v, other.v, strict=True)])
 
     def __sub__(self, other: Vec) -> Vec:
-        return Vec([a - b for a, b in zip(self.v, other.v)])
+        return Vec([a - b for a, b in zip(self.v, other.v, strict=True)])
 
     def __mul__(self, scalar: float) -> Vec:
         return Vec([a * scalar for a in self.v])
@@ -199,7 +214,7 @@ class PythonSampler(Sampler):
         return Vec([1.0 if self.rng.random() < p else 0.0 for _ in range(self.n)])
 
     def maximum(self, values: list[Vec]) -> Vec:
-        return Vec([max(xs) for xs in zip(*(v.v for v in values))])
+        return Vec([max(xs) for xs in zip(*(v.v for v in values), strict=True)])
 
     def mean(self, value: Vec) -> float:
         return sum(value.v) / len(value.v)

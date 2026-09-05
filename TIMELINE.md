@@ -11,7 +11,7 @@ Legend: ✅ done · 🔨 in progress · ⏳ planned · 🧊 parked
 ## 2026-09-04 — Day 1: problem → spec → skeleton
 
 ### Done
-- **Problem statement** written (`problem statment.md`) with a plain-language
+- **Problem statement** written (`problem-statement.md`) with a plain-language
   explanation section.
 - **Found Foosh's real infra**: `~/Foosh/async-workflows/infrastructure/` is
   AWS CDK (Python), not Terraform. Synthesized CloudFormation lives in
@@ -21,7 +21,7 @@ Legend: ✅ done · 🔨 in progress · ⏳ planned · 🧊 parked
 - **SPEC.md** written and all 7 design questions resolved one by one:
   | # | Decision |
   |---|---|
-  | Q1 | Python 3.12 (`python-hcl2`, `networkx`, `typer`) |
+  | Q1 | Python 3.12 (`python-hcl2`, `typer`, `pyyaml`, `rich`; `networkx` planned, later dropped as unused) |
   | Q2 | CLI + JSON now; static web viewer later (M6) |
   | Q3 | Infer request paths from IaC evidence; `scenarios.yaml` overrides |
   | Q4 | Built-in defaults + `--profile`; schema designed so `calibrate` (M7) slots in |
@@ -408,7 +408,7 @@ match cannot resolve — both keep defaults and say so.
 
 ---
 
-### M8 done — capacity (uncommitted, awaiting review)
+### M8 done — capacity (committed `7b7fdaa`)
 - **Fan-out waves**: a Map with `MaxConcurrency 5` and 10 items now costs 2 rounds, not 1 — `run_workflow_10_text` = 6.4 s (calibrated) and `Result.shape.fanout_waves`; `run_workflow_3_nodes` unchanged at 184.0 ms.
 - **Capacity attributes** on nodes (`concurrency`, `instances`, `read/write_capacity`) from Terraform and CloudFormation; a `capacity:` block in `defaults.yaml` for account-level limits, overridable with `--profile`.
 - **`load` walker** (`simulator/walkers/load.py`, `load.py`, `capacity.py`): arrivals from `load.yaml` (`every`, `while: running` via Little's law, workflow mix), hold time per resource (a Lambda holds its slot for its whole invocation), M/M/c Erlang-C waits, expected and p99 per scenario per user count, `saturated` when ρ ≥ 1. One Result per scenario; the sweep lives in `Result.load`; `report.json` gains a top-level `capacity`.
@@ -425,6 +425,32 @@ match cannot resolve — both keep defaults and say so.
 - Tests: `tests/test_load.py` (intervals, mix validation, Erlang-C known values, capacity from attrs, waves, a hand-built graph saturating at the computable U, JSON cleanliness, Little's law), Foosh + CLI load tests. 184 tests, 92.4% coverage.
 - Not done: discrete-event simulation (burstiness, the Map's per-workflow cap as a queue), calibration of capacity numbers from CloudWatch (`ConcurrentExecutions`, `Throttles`).
 
+---
+
+## 2026-09-05 — Day 2: the deep-look pass
+
+A teammate (infra/DevOps lead who will run it on real stacks) asked for a deep look so it is
+"super efficient". Three read-only review passes (runtime, correctness/UX, code quality), a
+sequenced plan of eight work packages, one local commit per package through `make check`,
+nothing pushed until reviewed. Weighting: trustworthy numbers first, robustness on unfamiliar
+Terraform second, contributor-ready repo third, speed only where visible.
+
+### Done
+- **Phase 1 — docs** (`5f108c5`): `DECISIONS.md` (53 decisions + 11 for this pass: question · options · choice · why · file:line) and `CODE_FLOW.md` (all 7 commands traced, two deep traces, glossary, "how to add …" cookbook); 273 file:line references verified by `tests/test_docs_refs.py`.
+- **WP1 — pricing correctness** (`3fe71c3`): response legs charge only `respond` (default 0) — no duplicate processing, no impossible cold start; new registered `transition` cost rule charges every hop out of a state machine; op-key fallback (ROUTE→ec2 = `handle`, INVOKE→dynamodb = `read`); unknown region warns once per node. Foosh defaults: `poll_status` 106 → **81**, `start_workflow` 151 → 126, `run_workflow_3_nodes` 184 → **309**; classic-web 57.2 / 356.0 unchanged.
+- **WP3 — fan-out and orchestrator** (`f0eb8a9`): innermost Map for fan-out waves (the real CDK template's Maps sit under a Choice — waves were always 1); erlangs per copy (Lambdas were 5× low, others 2× high); `op:` typos error with a hint; parallel visits merged; `reserved_concurrent_executions = 0` = throttled off. Foosh calibrated first-to-break: api Lambda ≈ 2,270 → **Lambda unreserved pool ≈ 3,838 users**.
+- **WP2 — edge inference** (`a4941e4`): one edge per (src, dst) with `ops` = everything any rule found, kind by priority (READ over WRITE; `op: write` re-prices) — order-independent; ECS task definitions and Auto Scaling Groups followed; `data.*` and duplicate resources warn; Terraform twin aligned with the real CDK template: graph diff **48 → 0 edges**; new `examples/order-queue` (SQS → Lambda rule 0 % → 100 % executed).
+- **WP4 — CLI hardening** (`b28c6e4`): one error boundary, exit codes 0/1/2/3 documented and tested (no tracebacks); relative `--profile`/`--load`/`--out` resolve against the target dir first; `view` prints its URL before blocking; `--version`; `run --scenario`; `validate --strict`.
+- **WP5 — real-world Terraform** (`890135d`): hardened against six public repos (serverless-patterns, provider-aws examples, terraform-aws-lambda, learn-eks, MoJ modernisation-platform, hcloud); `*.tf.json`/`.tofu`, tfvars, `--workspace`, `--region` fallback, splat, `file()`/`templatefile()` paths, `.terraform/modules/modules.json`; five vendored fixtures with attribution; **252 tests**.
+
+### In progress
+- **WP6 — repo / onboarding**: LICENSE (MIT), CONTRIBUTING, GitHub Actions CI (3.12 + 3.13, `make ci` + the diff exit-2 self-test), pyproject metadata + package-data, ruff E501/bugbear at 120 columns, `examples/iacsim.yaml` regenerated from `DEFAULTS` (asserted by a test), docs drift fixed, `problem-statement.md` rename.
+- **WP7 — runtime**: Terraform file/expression parse cache (137 → ~8 ms), static built-in module list instead of walking every module, one pricer per run, edge index, numpy as a dev dependency so the fast Monte-Carlo path is tested.
+- **WP8 — cleanups**: diff models out of the IR, `WorkflowStep`/`LoadSummary` dataclasses, dead code out, hermetic tests.
+
+### Next
+- Phase 3 roadmap (M9–M14 below) once the pass is reviewed and pushed.
+
 ## Milestones
 
 | # | Goal | Deliverable / acceptance | Status | Date |
@@ -436,15 +462,28 @@ match cannot resolve — both keep defaults and say so.
 | M4 | Compare designs | `iacsim diff classic-web classic-web-bad` shows the cross-region DB as the delta (graph-level move, A1 shift, the two RDS hops, co-locate recommendation); `--fail-on-regression` for CI | ✅ | 2026-09-04 |
 | M5 | Read CloudFormation / CDK output | `iacsim graph examples/foosh-cfn` (real `cdk synth` output) produces the same graph as `foosh-serverless` — 30/30 nodes, every difference enumerated and explained in the test | ✅ | 2026-09-04 |
 | M6 | Tail latency + polish | `--walker monte_carlo --samples N --seed S` → p50/p90/p95/p99 + `tail_risk`; `iacsim view` graph viewer; CLI tests (141 total); Terraform twin labels == real CDK labels | ✅ | 2026-09-04 |
-| M8 | Capacity — users until it breaks | `iacsim run --walker load` sweeps a users count, reports utilisation per resource and p99 per route, names what breaks first with the IaC attribute that raises the ceiling; fan-out waves | ✅ (uncommitted, awaiting review) | 2026-09-04 |
+| M8 | Capacity — users until it breaks | `iacsim run --walker load` sweeps a users count, reports utilisation per resource and p99 per route, names what breaks first with the IaC attribute that raises the ceiling; fan-out waves | ✅ | 2026-09-04 |
 | M7 | Real numbers | `iacsim calibrate` — pluggable `MetricSource`; fake source end-to-end (coverage table, overlay YAML, `by_label`, rung in headers, Monte-Carlo picks up measured cold starts); CloudWatch source shipped, **not run live** (option a) | ✅ | 2026-09-04 |
 
 Estimated: M1–M3 ≈ 1 week (demo-able), M0–M6 ≈ 2 weeks, M7 additive. Actual: all of M0–M7 on 2026-09-04.
 
+### Roadmap — Phase 3 (every infra source, every major cloud; live-account reader last, as a plug)
+
+| # | Goal | Deliverable / acceptance | Status | Date |
+|---|---|---|---|---|
+| M9 | Servers + Kubernetes | `generic` normaliser with `sites.yaml` / `distance.custom`; hcloud / DigitalOcean / Proxmox / vSphere / libvirt type maps; `remote-exec` as "provisioned on host" evidence; Kubernetes manifests / Helm-template adapter (Deployment env, Service→Deployment, Ingress/HTTPRoute, replicas/HPA → capacity) | ⏳ | |
+| M10 | Azure | `azurerm` normaliser + rules (private_endpoint, app_settings, role_assignment, APIM backend/policy, Logic App actions, Event Grid, backend pools, VNet peering/vWAN); region-pair defaults; ARM/Bicep parser; `azapi_resource` bodies; one example | ⏳ | |
+| M11 | GCP | `google` normaliser + rules (forwarding_rule→url_map→backend_service→NEG→Cloud Run, Eventarc, Pub/Sub push, Workflows YAML, IAM via service accounts, PSC); inter-region defaults; `.tofu` | ⏳ | |
+| M12 | More IaC formats | Pulumi `stack export`, CDKTF `cdk.tf.json`, Config Connector KRM, OpenTofu extras | ⏳ | |
+| M13 | Servers without Terraform | Docker Compose, Ansible inventory + roles, Nomad, PaaS config files, Cloudflare Workers / Vercel | ⏳ | |
+| M14 | Live-account readers (the plug) | `INVENTORY_SOURCES` registry configured like `calibrate.sources`; AWS Config / Resource Explorer, Azure Resource Graph, GCP Cloud Asset Inventory; read-only; tested with a fake inventory | ⏳ | |
+
+Rule for every Phase 3 milestone: only new registrations — `iacsim plugins` lists the new names and `core/`, `simulator/`, `analyzer/`, `reporter/` stay untouched except additive registrations.
+
 ## Open items / ideas parked
 
 - 🧊 Reading CDK Python source directly (instead of `cdk.out`) — deferred, `cdk synth` output is enough.
-- 🧊 Non-AWS providers — graph is neutral, only the normaliser is AWS-specific.
-- 🧊 Throughput / queueing under load — out of scope for v1, single-request latency only.
 - 🧊 X-Ray traces as an inference *validator* (confirm/deny inferred edges) — a natural `MetricSource` plugin plus a rule.
 - 🧊 Option (a): live CloudWatch calibration against a real account (read-only creds; one command, see M7 notes).
+- 🧊 Discrete-event load simulation (burstiness, warm-up, the Map's per-workflow cap as a queue) — M8 is analytic M/M/c.
+- 🧊 Calibrating capacity numbers (`ConcurrentExecutions`, `Throttles`) from CloudWatch.

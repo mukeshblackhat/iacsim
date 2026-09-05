@@ -1,12 +1,16 @@
-# Sample iacsim.yaml — every key is optional; this is the full default set.
+# Sample iacsim.yaml — every key is optional; this file IS the full default set
+# (tests/test_config_docs.py asserts it equals iacsim.core.config.DEFAULTS).
 # Copy next to your Terraform and edit. CLI flags override these.
 provider: aws
 parsers:
   cloudformation:
     region: null                # CloudFormation has no provider block; null = guess from ARNs, else us-east-1
+  terraform:
+    region: null                # fallback when a provider's region cannot be resolved (--region)
+    workspace: null             # value of terraform.workspace; null = "default" (--workspace)
 inference:
   rules: [step_functions, event_source_mapping, lambda_permission,
-          api_gateway_integration, target_group, env_var, iam_policy]
+          api_gateway_integration, target_group, env_var, iam_policy, vpc_peering]
 scenarios:
   sources: [yaml_file, inferred_from_entrypoints]
   file: scenarios.yaml
@@ -14,11 +18,14 @@ latency:
   profiles: [defaults]          # add ./profiles/team.yaml, ./calibrated.yaml ...
   rules: [distance, processing, cold_start, transition]   # transition = one state change per hop out of a state machine
 simulation:
-  walker: expected_value        # or monte_carlo → p50/p95/p99
+  walker: expected_value        # or monte_carlo → p50/p95/p99, or load → users until it breaks
   samples: 10000                # monte_carlo only
   seed: null                    # monte_carlo only; set for reproducible runs
+  load: load.yaml               # load walker only: arrival rates, next to scenarios.yaml
+  tail_factor: 1.3              # load walker only: p99 ≈ tail_factor × expected before queueing
 analysis:
-  analyzers: [per_hop, per_node, per_category, critical_path, recommendations, tail_risk]   # tail_risk only speaks when sampled
+  analyzers: [per_hop, per_node, per_category, critical_path, recommendations, tail_risk, saturation]
+                                # tail_risk only speaks when sampled; saturation only with the load walker
   top_n: 10
 report:
   outputs: [text, json]

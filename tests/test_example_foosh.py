@@ -111,7 +111,8 @@ def _flatten(steps):
         yield s
         for nested in (s.get("body") or []):
             yield from _flatten([nested])
-        for branch in (s.get("branches") or {}).values() if isinstance(s.get("branches"), dict) else (s.get("branches") or []):
+        branches = s.get("branches") or []
+        for branch in branches.values() if isinstance(branches, dict) else branches:
             yield from _flatten(branch)
 
 

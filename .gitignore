@@ -11,3 +11,4 @@ __pycache__/
 # local share-outs, never committed
 foosh-run-report.md
 .coverage
+build/

@@ -124,7 +124,7 @@ class MetricSource(ABC):
     def __init__(self, **options: Any) -> None:
         self.options = options
 
-    def prepare(self, root: Path) -> None:
+    def prepare(self, root: Path) -> None:  # noqa: B027 — optional hook, not every source needs it
         """Called once before measuring, with the directory that holds iacsim.yaml —
         resolve relative paths here (mirrors ScenarioSource.load(graph, root))."""
 

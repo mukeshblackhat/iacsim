@@ -102,7 +102,7 @@ def test_calibrator_writes_complete_blocks_by_id_and_label_and_reports_skips():
 
 def test_variance_sigma_is_the_median_of_at_least_three_measured_sigmas():
     g = InfraGraph()
-    for i, sigma in enumerate((0.2, 0.9, 0.4)):
+    for i in range(3):
         g.add_node(Node(f"f{i}", NodeKind.COMPUTE, "lambda", Placement(region="eu-west-1"), label=f"f{i}"))
     data = {f"f{i}": {"warm": 1, "sigma": s} for i, s in enumerate((0.2, 0.9, 0.4))}
     result = calibrate(g, _source(**{"lambda": data}), "1d", fmt="terraform")

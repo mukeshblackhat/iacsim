@@ -109,6 +109,7 @@ class ModuleInstance:
         self.outputs: dict[str, Any] = {}
         self.modules: dict[str, dict] = {}
         self.resources: list[tuple[str, str, dict, str]] = []     # type, name, body, file
+        self._by_type_name: dict[tuple[str, str], tuple[dict, str]] = {}   # (type, name) → (body, file)
         self.provider_blocks: list[dict] = []
         self._load_files()
 
@@ -148,10 +149,12 @@ class ModuleInstance:
             for block in doc.get("resource", []):
                 for rtype, inner in _labelled(block):
                     for rname, body in _labelled(inner):
-                        first = next((f for t, n, _, f in self.resources if (t, n) == (rtype, rname)), None)
+                        first = self._by_type_name.get((rtype, rname))
                         if first is not None:
-                            self.warnings.add(f"duplicate resource {rtype}.{rname} in {first} and {file}; first wins")
+                            self.warnings.add(
+                                f"duplicate resource {rtype}.{rname} in {first[1]} and {file}; first wins")
                             continue
+                        self._by_type_name[(rtype, rname)] = (body, str(file))
                         self.resources.append((rtype, rname, body, str(file)))
 
     def _resolve_regions(self, provider_map: dict[str, str]) -> dict[str, str]:
@@ -223,12 +226,11 @@ class ModuleInstance:
     def resource(self, rtype: str, name: str) -> ResourceInstances:
         key = f"{rtype}.{name}"
         if key not in self._instances:
-            for t, n, body, _file in self.resources:
-                if t == rtype and n == name:
-                    self._instances[key] = self._guarded(key, lambda b=body: self._expand(rtype, name, b))
-                    break
-            else:
+            found = self._by_type_name.get((rtype, name))
+            if found is None:
                 raise EvalError(f"unknown resource {key}")
+            body = found[0]
+            self._instances[key] = self._guarded(key, lambda: self._expand(rtype, name, body))
         return self._instances[key]
 
     def _guarded(self, key: str, compute):
@@ -361,7 +363,8 @@ class ModuleInstance:
                         inner = scope.child({iterator: {"key": key, "value": value}})
                         plain = {k: to_plain(evaluate_raw(v, inner)) for k, v in content.items()
                                  if k not in ("dynamic", "__is_block__", "__comments__")}
-                        for sub_label, items in self._dynamic_blocks(address, content.get("dynamic", []), inner).items():
+                        nested = self._dynamic_blocks(address, content.get("dynamic", []), inner)
+                        for sub_label, items in nested.items():
                             plain.setdefault(sub_label, []).extend(items)
                         out.setdefault(label, []).append(plain)
                 except (EvalError, ParseError, TypeError, ValueError, KeyError) as e:
@@ -371,11 +374,24 @@ class ModuleInstance:
 
 # ------------------------------------------------------------------ helpers
 
+_DOC_CACHE: dict[tuple[str, int], dict] = {}
+
+
 def _load_document(file: Path) -> dict:
-    if file.name.endswith(".json"):
-        return load_tf_json(file)
-    with open(file) as fh:
-        return hcl2.load(fh)
+    """Parse one source file, cached by (path, mtime). A module used by N
+    `module` blocks (or N `for_each` keys) is parsed once, not N times — the
+    loader only *reads* the returned blocks, never mutates them, so sharing
+    the parsed document between instances is safe."""
+    key = (str(file.resolve()), file.stat().st_mtime_ns)
+    doc = _DOC_CACHE.get(key)
+    if doc is None:
+        if file.name.endswith(".json"):
+            doc = load_tf_json(file)
+        else:
+            with open(file) as fh:
+                doc = hcl2.load(fh)
+        _DOC_CACHE[key] = doc
+    return doc
 
 
 def _load_tfvars(root: Path, warnings: Warnings) -> dict[str, Any]:

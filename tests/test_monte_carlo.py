@@ -20,6 +20,7 @@ from iacsim.core.pipeline import cost_graph, load_profile, make_pricer
 from iacsim.simulator.traversal import Planner, build_result, evaluate
 from iacsim.simulator.walkers.monte_carlo import (
     MonteCarloBackend,
+    NumpySampler,
     PythonSampler,
     Vec,
     make_sampler,
@@ -114,10 +115,35 @@ def test_vec_arithmetic_and_percentiles():
     assert s.bernoulli(1.0).v == [1.0] * 4 and s.bernoulli(0.0).v == [0.0] * 4
 
 
-def test_make_sampler_picks_numpy_when_available():
-    sampler = make_sampler(10, seed=1)
-    try:
-        import numpy  # noqa: F401
-        assert type(sampler).__name__ == "NumpySampler"
-    except ImportError:
-        assert isinstance(sampler, PythonSampler)
+def test_make_sampler_picks_numpy():
+    """numpy is a dev dependency, so the fast path is exercised in the suite, not skipped."""
+    assert isinstance(make_sampler(10, seed=1), NumpySampler)
+
+
+def test_python_and_numpy_samplers_agree(costed):
+    """Same graph, same path: the pure-Python fallback and the numpy sampler must
+    tell the same story (means within 5 %, p99 within 10 %) — they draw from the
+    same distributions with different generators, so only the statistics match."""
+    g, profile, price = costed
+    plan = Planner(g, price).plan(Scenario("t", "gw", [Step(node="fn"), Step(node="table"), Step(node="far_db")]))
+    results = []
+    for sampler in (PythonSampler(6000, seed=11), NumpySampler(6000, seed=11)):
+        backend = MonteCarloBackend(g, profile, sampler)
+        ev = evaluate(plan, backend)
+        total_p99 = sampler.percentiles(ev.total, (99,))[0]
+        results.append((build_result(plan, ev, backend, walker="monte_carlo", samples=6000).total_ms, total_p99))
+    (py_mean, py_p99), (np_mean, np_p99) = results
+    assert np_mean == pytest.approx(py_mean, rel=0.05)
+    assert np_p99 == pytest.approx(py_p99, rel=0.10)
+
+
+def test_missing_numpy_prints_one_tip_for_big_runs(monkeypatch, capsys):
+    import sys as _sys
+
+    from iacsim.simulator.walkers import monte_carlo as mc
+    monkeypatch.setitem(_sys.modules, "numpy", None)      # import numpy → ImportError
+    monkeypatch.setattr(mc, "_tip_shown", False)
+    assert isinstance(mc.make_sampler(2000, seed=0), PythonSampler)
+    assert isinstance(mc.make_sampler(2000, seed=0), PythonSampler)
+    err = capsys.readouterr().err
+    assert err.count(mc.NUMPY_TIP) == 1
