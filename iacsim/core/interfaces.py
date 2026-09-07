@@ -9,7 +9,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from iacsim.core.models import (
     Edge,
@@ -44,7 +44,35 @@ class Parser(ABC):
 
 
 class Normaliser(ABC):
-    """Provider-specific RawResources → provider-neutral nodes. One per cloud."""
+    """Provider-specific RawResources → provider-neutral nodes. One per cloud.
+
+    A normaliser also declares how its own subtypes *behave*, in the two class
+    tables below. The cost rules read the tables (through `behaviour_tables()`)
+    instead of naming clouds, so adding a provider never edits a rule. Both
+    default to empty: a normaliser that declares nothing keeps working, its
+    nodes simply price as they did before the tables existed.
+
+    `INVOKE_KEYS` maps a subtype to the key inside its `processing` block that a
+    call *into* such a node is charged — `lambda` → `warm`, `s3` → `read`. It is
+    used for INVOKE hops and as the fallback for any edge kind the node's block
+    does not price. **A subtype missing from it makes every hop into that node
+    cost nothing, silently** (`latency/rules/processing.py`), so every subtype
+    the type map can produce belongs here, and the key must exist in the
+    profile block — `tests/test_latency_rules.py` asserts both.
+
+    `COLD_START` lists the subtypes that pay a cold start (`latency/rules/
+    cold_start.py`); their profile blocks need `cold` and `cold_prob`.
+
+    `CHAIN` lists subtypes that are one physical device drawn as several nodes
+    (GCP's forwarding rule → proxy → URL map → backend service). A hop whose
+    *both* ends are chain subtypes costs no distance (`latency/rules/
+    distance.py`); the hop into the chain and the hop out of it are priced
+    normally.
+    """
+
+    INVOKE_KEYS: ClassVar[dict[str, str]] = {}          # subtype → profile key charged on a call in
+    COLD_START: ClassVar[frozenset[str]] = frozenset()  # subtypes that cold-start
+    CHAIN: ClassVar[frozenset[str]] = frozenset()       # subtypes with no network between them
 
     @abstractmethod
     def normalise(self, raw: RawResources) -> InfraGraph: ...
@@ -171,3 +199,42 @@ WALKERS: Registry[Walker] = Registry("walker")
 ANALYZERS: Registry[Analyzer] = Registry("analyzer")
 REPORTERS: Registry[Reporter] = Registry("reporter")
 METRIC_SOURCES: Registry[MetricSource] = Registry("metric source")
+
+
+# ------------------------------------------------- provider-owned behaviour tables
+
+@dataclass(frozen=True)
+class BehaviourTables:
+    """Every registered Normaliser's subtype tables, merged into one lookup.
+
+    The seam exists because `CostRule.cost(edge, graph, profile)` receives no
+    config and `Node` carries no provider field, so a rule cannot ask *which*
+    cloud a node came from. It does not need to: subtype names are unique across
+    providers by contract (CONTRIBUTING.md, "A cloud provider"), so the union of
+    every normaliser's tables answers the question unambiguously.
+    """
+
+    invoke_keys: dict[str, str]
+    cold_start: frozenset[str]
+    chain: frozenset[str]
+
+
+_TABLES: tuple[tuple[str, ...], BehaviourTables] | None = None
+
+
+def behaviour_tables() -> BehaviourTables:
+    """The merged tables, built once and rebuilt only if a plugin registers a
+    normaliser later in the process (the registry's name list is the cache key)."""
+    global _TABLES
+    names = tuple(NORMALISERS.names())
+    if _TABLES is None or _TABLES[0] != names:
+        invoke_keys: dict[str, str] = {}
+        cold_start: set[str] = set()
+        chain: set[str] = set()
+        for name in names:                      # sorted, so a merge is deterministic
+            normaliser = NORMALISERS.get(name)
+            invoke_keys.update(normaliser.INVOKE_KEYS)
+            cold_start.update(normaliser.COLD_START)
+            chain.update(normaliser.CHAIN)
+        _TABLES = (names, BehaviourTables(invoke_keys, frozenset(cold_start), frozenset(chain)))
+    return _TABLES[1]

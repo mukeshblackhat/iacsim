@@ -15,11 +15,16 @@ Placement comes from the provider region recorded by the parser, plus
 The normaliser also adds one EXTERNAL node, `internet`, with an edge into
 every public entry point (gateway, load balancer, CDN) so scenarios can start
 from a user.
+
+It owns AWS's two behaviour tables as well (`INVOKE_KEYS`, `COLD_START`, both
+declared on the `Normaliser` ABC): the latency rules read them through
+`behaviour_tables()` rather than hardcoding cloud names, so a new subtype is
+still one line per table here and never an edit in `latency/rules/`.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 from iacsim.core.interfaces import NORMALISERS, Normaliser
 from iacsim.core.models import (
@@ -104,6 +109,20 @@ INTERNET = "internet"
 
 @NORMALISERS.register("aws")
 class AwsNormaliser(Normaliser):
+    # What a call *into* each subtype costs: the key inside its `processing` block
+    # charged on an INVOKE hop, and the fallback for any edge kind the block does
+    # not price. Every subtype TYPE_MAP can produce is here except the NETWORK ones,
+    # which are never a hop (scenarios/inferred.py NOT_A_HOP) and have no block.
+    INVOKE_KEYS: ClassVar[dict[str, str]] = {
+        "lambda": "warm", "ec2": "handle", "fargate": "handle",
+        "api_gateway": "route", "api_gateway_v2": "route", "alb": "route",
+        "step_functions": "transition", "cloudfront": "miss",
+        "dynamodb": "read", "rds": "read", "s3": "read", "elasticache": "read",
+        "sqs": "publish", "sns": "publish", "kinesis": "publish",
+    }
+    # Subtypes that pay a cold start; their profile blocks carry `cold` / `cold_prob`.
+    COLD_START: ClassVar[frozenset[str]] = frozenset({"lambda"})
+
     def normalise(self, raw: RawResources) -> InfraGraph:
         graph = InfraGraph()
         by_address = {r.address: r for r in raw.resources}

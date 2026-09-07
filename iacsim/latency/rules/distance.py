@@ -10,11 +10,16 @@ If a node's region is unknown (the provider region did not resolve) the rule
 cannot tell same-region from cross-region; it prices the hop as
 same_region_unknown_az and says so once per node in graph.warnings, because
 that fallback silently hides a cross-region penalty.
+
+A hop whose both ends are chain subtypes (`Normaliser.CHAIN` — GCP's forwarding
+rule → proxy → URL map → backend service, one Google Front End drawn as several
+nodes) costs no distance at all: there is no network between them. The hop into
+the chain and the hop out of it are priced normally.
 """
 
 from __future__ import annotations
 
-from iacsim.core.interfaces import COST_RULES, CostRule
+from iacsim.core.interfaces import COST_RULES, CostRule, behaviour_tables
 from iacsim.core.models import Edge, InfraGraph, NodeKind, Profile
 
 
@@ -29,6 +34,9 @@ class DistanceRule(CostRule):
 
         if src.kind == NodeKind.EXTERNAL:
             return {"distance": float(d.get("internet_to_edge", 20))}
+        chain = behaviour_tables().chain
+        if src.subtype in chain and dst.subtype in chain:
+            return {"distance": 0.0}             # one device, several nodes; no wire between them
 
         a, b = src.placement, dst.placement
         for node in (src, dst):

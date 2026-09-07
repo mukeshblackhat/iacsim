@@ -19,7 +19,25 @@ distance:
     us-east-1/us-west-2: 65
     ap-south-1/eu-west-1: 120
     ap-southeast-1/us-east-1: 215
-  internet_to_edge: 20            # user → first AWS hop
+    # GCP regions — same scale as the AWS rows above (median inter-region RTT
+    # as Google's inter-region latency dashboard reports it), so an AWS and a
+    # GCP design compare on equal terms. Estimates.
+    asia-south1/asia-southeast1: 60
+    asia-south1/europe-west1: 125
+    asia-south1/us-central1: 235
+    asia-south1/us-east1: 215
+    asia-south1/us-west1: 230
+    asia-southeast1/europe-west1: 175
+    asia-southeast1/us-central1: 195
+    asia-southeast1/us-east1: 220
+    asia-southeast1/us-west1: 165
+    europe-west1/us-central1: 100
+    europe-west1/us-east1: 88
+    europe-west1/us-west1: 135
+    us-central1/us-east1: 33
+    us-central1/us-west1: 35
+    us-east1/us-west1: 62
+  internet_to_edge: 20            # user → first hop inside the cloud (AWS edge, or a Google Front End)
 
 # Spread around the numbers above — only the Monte-Carlo walker reads these.
 # σ is the lognormal's log-space standard deviation (0.2 ≈ ±20 % most of the time).
@@ -75,8 +93,148 @@ processing:
   sns:
     defaults: { publish: 10, consume: 50 }
     per_resource: {}
+  kinesis:
+    # Estimates. publish ≈ a PutRecord round trip; consume = propagation to a
+    # standard shared-throughput consumer, which polls GetRecords about once a
+    # second — enhanced fan-out is ~70 ms and is not modelled yet.
+    defaults: { publish: 10, consume: 200 }
+    per_resource: {}
   step_functions:
     defaults: { transition: 25 }                # charged on the hop into the state machine AND on every hop out of it
+    per_resource: {}
+
+  # ---------------------------------------------------------------- GCP
+  # Estimates from public figures, like the AWS blocks above. Subtype names are
+  # GCP-native (docs/gcp/01-DECISIONS.md G11) so nothing here shadows an AWS block.
+  cloud_run:
+    # Container cold start: image pull + start, typically 1–3 s for an
+    # interpreted-language image; longer than Lambda's. Estimate.
+    defaults: { warm: 5, cold: 2000, cold_prob: 0.05, respond: 0 }
+    per_resource: {}
+  cloud_run_job:
+    defaults: { start: 2000 }                   # a job execution always starts a fresh container
+    per_resource: {}
+  cloud_run_worker_pool:
+    defaults: { handle: 5, respond: 0 }         # pull-based, always-on: no cold start
+    per_resource: {}
+  cloud_functions_v2:
+    defaults: { warm: 5, cold: 1500, cold_prob: 0.05, respond: 0 }   # runs on Cloud Run; slimmer image than a service
+    per_resource: {}
+  cloud_functions:
+    defaults: { warm: 5, cold: 1000, cold_prob: 0.05, respond: 0 }   # v1 runtime, ~0.5–2 s public figures
+    per_resource: {}
+  app_engine:
+    defaults: { warm: 5, cold: 1500, cold_prob: 0.05, respond: 0 }   # standard env scales to zero; flexible does not
+    per_resource: {}
+  dataflow:
+    defaults: { handle: 1000 }                  # streaming pipeline element latency — seconds, not ms
+    per_resource: {}
+  document_ai:
+    defaults: { process: 2000 }                 # synchronous processDocument on a one-page document
+    per_resource: {}
+  vertex_index_endpoint:
+    defaults: { query: 30 }                     # Vector Search ANN query
+    per_resource: {}
+  gce:
+    defaults: { handle: 3, respond: 0 }
+    per_resource: {}
+  gke_cluster:
+    defaults: { handle: 3, respond: 0 }
+    per_resource: {}
+  gke_node_pool:
+    defaults: { handle: 3, respond: 0 }
+    per_resource: {}
+  # The HTTP(S) load-balancer chain: five separate nodes that are one Google
+  # Front End (G3). Every internal hop is route: 0 (G9). Note the GFE's own
+  # routing time is therefore never charged at all — an ALB charges route: 2.
+  forwarding_rule:
+    defaults: { route: 2 }                     # the GFE's own routing; ALB parity. The rest of the chain is 0
+    per_resource: {}
+  target_proxy:
+    defaults: { route: 0 }
+    per_resource: {}
+  url_map:
+    defaults: { route: 0 }
+    per_resource: {}
+  backend_service:
+    defaults: { route: 0 }                      # enable_cdn lives on the node's attrs; not priced yet
+    per_resource: {}
+  backend_bucket:
+    defaults: { route: 0 }
+    per_resource: {}
+  neg:
+    defaults: { route: 0 }
+    per_resource: {}
+  firebase_hosting:
+    defaults: { hit: 10, miss: 40 }             # priced as a miss, like cloudfront
+    per_resource: {}
+  gcp_api_gateway:
+    defaults: { route: 10 }
+    per_resource: {}
+  cloud_endpoints:
+    defaults: { route: 5 }                      # ESP proxy in front of the service
+    per_resource: {}
+  cloud_sql:
+    defaults: { read: 5, write: 10 }
+    per_resource: {}
+  firestore:
+    defaults: { read: 10, write: 20 }           # document get / commit; multi-region replication on write
+    per_resource: {}
+  memorystore:
+    defaults: { read: 0.5, write: 0.5 }
+    per_resource: {}
+  gcs:
+    defaults: { read: 20, write: 30 }
+    per_resource: {}
+  vertex_index:
+    defaults: { read: 30 }                      # reached through vertex_index_endpoint in practice
+    per_resource: {}
+  spanner:
+    defaults: { read: 5, write: 15 }            # commit pays a Paxos round
+    per_resource: {}
+  bigquery:
+    defaults: { read: 1500, write: 300 }        # read = an interactive query; write = streaming insert
+    per_resource: {}
+  bigtable:
+    defaults: { read: 5, write: 5 }
+    per_resource: {}
+  memcache:
+    defaults: { read: 0.5, write: 0.5 }
+    per_resource: {}
+  filestore:
+    defaults: { read: 2, write: 3 }             # NFS over the VPC
+    per_resource: {}
+  alloydb:
+    defaults: { read: 4, write: 8 }
+    per_resource: {}
+  pubsub:
+    defaults: { publish: 15, consume: 100 }     # consume = delivery delay to a subscriber
+    per_resource: {}
+  pubsub_subscription:
+    # The subscription is where delivery delay physically lives; topic → subscription
+    # is a fan-out inside Pub/Sub (publish: 0), so delivery is charged once.
+    defaults: { publish: 0, consume: 100 }
+    per_resource: {}
+  eventarc:
+    defaults: { publish: 10, consume: 250 }     # trigger delivery to its destination
+    per_resource: {}
+  eventarc_bus:
+    defaults: { publish: 10, consume: 250 }
+    per_resource: {}
+  eventarc_pipeline:
+    defaults: { publish: 10, consume: 250 }
+    per_resource: {}
+  cloud_tasks:
+    defaults: { publish: 10, consume: 500 }     # dispatch delay to the HTTP target
+    per_resource: {}
+  workflows:
+    defaults: { transition: 50 }                # one step; charged into and out of the workflow like step_functions
+    per_resource: {}
+  composer:
+    defaults: { transition: 10000 }             # Airflow scheduler latency between tasks — seconds
+    per_resource: {}
+  cloud_scheduler:
+    defaults: { transition: 500 }               # cron fire → HTTP target dispatch
     per_resource: {}
 
 # Capacity — read only by the `load` walker (M8) to turn arrival rates into
