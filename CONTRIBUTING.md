@@ -42,6 +42,26 @@ test to copy. In short:
   `parsers/cloudformation/`.
 - **A cloud provider** — a normaliser in `graph/normalisers/`, rules that carry the same evidence as
   the AWS ones, a defaults block in `latency/defaults.yaml`, one example stack, one test file.
+  M11 (GCP) proved that list is necessary but not sufficient. Four more, each of which fails
+  *silently* if you skip it — `CODE_FLOW.md` §5 "Adding a cloud provider" has the `file:line` for
+  every one:
+  - **Its own behaviour tables.** The subtype tables that decide what a hop costs are
+    provider-owned from M11 (`DECISIONS.md` §10, G4) — declare them on your `Normaliser`; do not
+    add your subtypes to the AWS tables.
+  - **The `"internet"` node-id contract.** The normaliser must emit one EXTERNAL node whose id is
+    literally `"internet"`, with an edge into every gateway / load balancer / CDN node.
+    `scenarios/inferred.py`, `simulator/traversal.py` and `core/pipeline.py` all match that exact
+    string; any other name gives a graph with no entry points and no inferred scenarios.
+  - **Subtype names that cannot collide with AWS ones.** `Profile.processing_for` is keyed by the
+    bare `Node.subtype` and `Node` carries no provider field, so a subtype called `lambda` or `s3`
+    silently inherits AWS numbers. Name them `cloud_run`, `gcs`, `cloud_sql`.
+  - **A test that asserts a non-zero cost for every new subtype.** A subtype missing from the
+    profile, or from your normaliser's `INVOKE_KEYS` table (read by `latency/rules/processing.py`
+    through `behaviour_tables()`), is charged
+    **nothing** — no error, no warning, the hop just prices at 0. The same applies to cold starts:
+    `latency/rules/cold_start.py` fires only for the subtypes its provider's table lists.
+  There is no `distance.<cloud>` block: `distance` in `latency/defaults.yaml` is one flat, global
+  table, so your inter-region pairs go straight into `distance.cross_region`.
 
 Third-party additions go in `plugins/` (auto-imported) or the `iacsim.plugins` entry-point group —
 no fork needed.

@@ -364,9 +364,48 @@ config. Copy the named file and the named test.
 | a **reporter** | `Reporter.render(findings, graph) -> str` (+ `render_diff`) `iacsim/core/interfaces.py:95`; build from the `Brief` | `REPORTERS` | `report.outputs: [...]` | `iacsim/reporter/markdown.py` | `tests/test_reporters.py` |
 | a **metric source** (Datadog, Prometheus…) | `MetricSource.supports(kind)` / `.measure(kind, name, window, region)` `iacsim/core/interfaces.py:107` | `METRIC_SOURCES` | `calibrate.source` + `calibrate.sources.<name>: {…}` | `iacsim/latency/calibrate/fake.py` | `tests/test_calibrate.py` |
 | a **parser** (Pulumi, ARM, Kubernetes…) | `Parser.detect(path)` / `.parse(path) -> RawResources` `iacsim/core/interfaces.py:26`; emit canonical Terraform-shaped types and `${addr.attr}` placeholders | `PARSERS` (+ `DETECTION_ORDER` `iacsim/parsers/detect.py:10`) | `format:` / `parsers.<name>: {…}` | `iacsim/parsers/cloudformation/` (parser + canonical + intrinsics) | `tests/test_cloudformation_parser.py`, `tests/test_example_foosh_cfn.py` |
-| a **cloud provider** (Azure, GCP) | a normaliser `Normaliser.normalise(raw) -> InfraGraph` `iacsim/core/interfaces.py:44` with its own `TYPE_MAP`; rules for that provider's evidence; a `distance.<cloud>` block in `defaults.yaml` | `NORMALISERS` + `INFERENCE_RULES` | `provider:` | `iacsim/graph/normalisers/aws.py` + the 8 rules | one example stack + its `tests/test_example_*.py` |
+| a **cloud provider** (Azure — M10, GCP — M11) | a normaliser `Normaliser.normalise(raw) -> InfraGraph` `iacsim/core/interfaces.py:46` with its own `TYPE_MAP` **and its own behaviour tables** (G4); inference rules carrying that provider's evidence; its region pairs added to the **one flat** `distance.cross_region` map `iacsim/latency/defaults.yaml:16`; a `processing` block per subtype, named so it cannot collide with an AWS subtype; the `"internet"` entry-node contract — all four spelled out under this table | `NORMALISERS` + `INFERENCE_RULES` | `provider:` | `iacsim/graph/normalisers/aws.py` + the 8 rules | one example stack + its `tests/test_example_*.py` |
 | a **plugin** without forking | any of the above, in one `.py` under `./plugins` | auto-imported at startup (`iacsim/core/registry.py:75`) | name it in `iacsim.yaml` | `plugins/README.md` | run `iacsim plugins` |
+
+### Adding a cloud provider — one correction and four contracts
+
+Until M11 this table told you to add a `distance.<cloud>` block to `defaults.yaml`. **That block
+does not exist.** `iacsim/latency/defaults.yaml:11` is one flat, global `distance` block and
+`iacsim/latency/rules/distance.py:37-44` is its only consumer. GCP region names do not collide
+with AWS ones, so a new cloud's inter-region pairs merge straight into the same
+`cross_region` map (`iacsim/latency/defaults.yaml:16`).
+
+1. **The node id `"internet"` is a contract, not a convention.** The normaliser must emit one
+   EXTERNAL node whose id is literally `"internet"` (`iacsim/graph/normalisers/aws.py:102`,
+   added at `:133`) with an edge into every GATEWAY / LB / CDN node (`ENTRY_KINDS`
+   `iacsim/graph/normalisers/aws.py:101`). Three places match that exact string: entry-point
+   discovery for inferred scenarios (`iacsim/scenarios/inferred.py:69`), the traversal's first
+   leg (`iacsim/simulator/traversal.py:134`), and `build_graph`, which seeds its edge index with
+   those edges before any inference rule runs (`iacsim/core/pipeline.py:56`). Name the node
+   anything else and the graph has no entry points and no inferred scenarios — with no warning.
+2. **Behaviour tables are provider-owned (G4).** Three tables in the engine are AWS-only, and
+   each fails *quietly* for a subtype it does not know. Two are now provider-owned (WP2):
+   each `Normaliser` declares `INVOKE_KEYS` and `COLD_START` (`iacsim/core/interfaces.py:67-68`)
+   and `behaviour_tables()` (`iacsim/core/interfaces.py:217`) merges every registered
+   normaliser's tables for the rules — `iacsim/latency/rules/processing.py:47` looks a subtype
+   up there, and a missing subtype still makes the hop cost **nothing**; the cold-start rule
+   (`iacsim/latency/rules/cold_start.py:21`) fires only for subtypes in the merged `COLD_START`
+   set. The third, `MetricSource.KINDS` (`iacsim/core/interfaces.py:156`), still enumerates AWS
+   subtypes inside the ABC.
+3. **Subtype names must be unique across clouds.** `Profile.processing_for`
+   (`iacsim/core/models.py:310`) is keyed by the bare `Node.subtype` and `Node`
+   (`iacsim/core/models.py:122`) carries no provider field, so reusing an AWS subtype name
+   silently inherits AWS numbers.
+4. **The Terraform loader reads AWS provider blocks only** (`iacsim/parsers/terraform/loader.py:167`):
+   every non-`aws` provider block is skipped, so the new cloud's nodes arrive with `region=None`
+   and every hop prices as `same_region_unknown_az`
+   (`iacsim/latency/rules/distance.py:41`) — 0.5 ms where a cross-region hop is 120.
 
 Rule of thumb for any addition: if `git diff --stat` touches `iacsim/core/`,
 `iacsim/simulator/`, `iacsim/analyzer/` or `iacsim/reporter/` for anything other than a
 registration import, it is an engine change — open a row in `DECISIONS.md` first.
+
+M11 (GCP) legitimately trips that rule: provider auto-detection edits
+`iacsim/core/pipeline.py:51`, node-id shortening edits `iacsim/core/models.py:252`, and the
+provider-owned tables edit `iacsim/core/interfaces.py:156`. Each has a row in `DECISIONS.md`
+§10 (G1–G6), which is what the rule asks for.

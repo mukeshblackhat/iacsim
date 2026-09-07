@@ -78,7 +78,8 @@ and gets a report: total latency, ranked bottleneck list, and per-hop breakdown.
 - CLI + text/JSON report.
 
 ### Out of scope (v1)
-- Non-AWS providers (GCP, Azure) — the graph is provider-neutral, but only AWS parsers are built.
+- Azure (M10) — the graph is provider-neutral; this is a normaliser plus rules, not a new parser.
+- GCP — **no longer out of scope: in progress (M11)**, see `docs/gcp/`. The correction that milestone forced: the blocker was never the *parsers*. `google_*` Terraform parses today with the same loader, evaluator and `${address.attr}` reference convention as `aws_*`. What is missing is a `google` normaliser, GCP inference rules (forwarding rule → URL map → backend service → NEG → Cloud Run, Eventarc, Pub/Sub push, Workflows, IAM via service accounts), GCP pairs in `cross_region`, and the AWS-subtype behaviour tables becoming provider-owned (`DECISIONS.md` §10, G4). One AWS-only filter on provider blocks in the Terraform loader is what drops the GCP region today.
 - Discrete-event load simulation (burstiness, warm-up transients). M8's `load` walker models contention analytically (M/M/c per resource) and names what breaks first; a full event-driven simulator is parked.
 - Live *tracing* (X-Ray per-hop timings). Aggregate metrics via `iacsim calibrate` are in (M7).
 - Application code analysis (we don't read Lambda source to figure out what it calls).
@@ -249,6 +250,16 @@ processing:
 
 Numbers are *approximate public figures*, not truth — the point is relative comparison ("moving the DB saves ~180 ms"), not absolute prediction. Every number is overridable and the report states which profile was used.
 
+**One flat distance table, all clouds.** There is no `distance.<cloud>` block — `distance` is
+global and `latency/rules/distance.py` is its only consumer. GCP region names (`us-central1`,
+`europe-west1`) do not collide with AWS ones, so GCP inter-region pairs merge straight into the
+same `cross_region` map; `same_az` / `cross_az` / `internet_to_edge` are shared.
+
+**Subtype names must be unique across clouds.** `Profile.processing_for` is keyed by the bare
+`Node.subtype` and `Node` carries no provider field, so a GCP subtype that reuses an AWS name
+would silently inherit AWS numbers. GCP subtypes are therefore named distinctly (`cloud_run`,
+`cloud_sql`, `pubsub`, `gcs`, …), never `lambda` or `s3`.
+
 ### Profile layering (Q4)
 
 Profiles stack, later wins per key:
@@ -305,7 +316,8 @@ IAC/
   iacsim/                    # python package — one folder per pipeline stage, one file per implementation
     core/        registry.py  models.py (IR)  interfaces.py (ABCs + registries)  config.py  pipeline.py
     parsers/     detect.py  terraform/{hcl_expr,evaluator,loader,parser}.py  cloudformation/parser.py
-    graph/       normalisers/aws.py  inference/<one file per rule>.py  (+ vpc_peering, added in M1)
+    graph/       normalisers/aws.py  normalisers/gcp.py (M11)  inference/<one file per rule>.py  (+ vpc_peering, added in M1)
+                 inference/ GCP rules (M11): backend_service.py  eventarc.py  pubsub_push.py  workflows.py  service_account.py  psc.py
     scenarios/   yaml_file.py  inferred.py
     latency/     defaults.yaml  profile.py  rules/{distance,processing,cold_start}.py  calibrate/{calibrator,writer,fake,cloudwatch,cloudwatch_queries}.py
     simulator/   walkers/{expected_value,monte_carlo}.py

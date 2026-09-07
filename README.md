@@ -120,6 +120,30 @@ Inside, CloudFormation resources are made Terraform-shaped in one place
 the same `${address.attr}` placeholders) so the normaliser and every
 inference rule run unchanged on both formats.
 
+## GCP input — in progress (M11)
+
+Point iacsim at a directory of `google_*` Terraform. There is no config file and no flag:
+the provider is auto-detected from the resource-type prefixes, and an explicit
+`provider: gcp` in `iacsim.yaml` still wins.
+
+```
+iacsim graph ./gcp-infra                     # google_* types → the gcp normaliser
+iacsim run   ./gcp-infra --region us-central1
+```
+
+`google` and `google-beta` are the same provider here — both declare `google_*` resource
+types, so a `google-beta` block (and a resource that only exists in beta) is read like any
+other. `.tf`, `.tofu` and `.tf.json`, modules, `for_each` / `count` and `templatefile()` all
+work exactly as they do for AWS: the parser layer was never AWS-specific.
+
+**Honest state:** M11 is in progress. What is missing is everything *after* the parse — the
+`google` normaliser and its type map, GCP inference rules (forwarding rule → URL map →
+backend service → NEG → Cloud Run, Eventarc, Pub/Sub push, Workflows, IAM via service
+accounts), GCP inter-region numbers, and the AWS-subtype behaviour tables becoming
+provider-owned. Until those land, a GCP directory parses but its graph is mostly placeholder
+`network` nodes with no region, so **do not trust the milliseconds yet**. Design notes and
+progress: `docs/gcp/`, `DECISIONS.md` §10, `TIMELINE.md`.
+
 ## Calibrate — replace guesses with measurements
 
 Every number in a report starts as a public average from `latency/defaults.yaml`

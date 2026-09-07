@@ -451,6 +451,69 @@ Terraform second, contributor-ready repo third, speed only where visible.
 ### Next
 - Phase 3 roadmap (M9–M14 below) once the pass is reviewed and pushed.
 
+## 2026-09-08 — Day 3: GCP planning (M11)
+
+The first non-AWS cloud. Planning and documentation only — **no file under `iacsim/`
+changed this round**; the suite stayed at 290 passing, which is the proof.
+
+### Decided (G1–G6 — full form, with options and evidence, in `docs/gcp/01-DECISIONS.md`)
+
+| id | Decision |
+|---|---|
+| G1 | Auto-detect the provider from resource-type prefixes (`google_*` → `gcp`); an explicit `provider:` in `iacsim.yaml` still wins |
+| G2 | One broad first slice — 40+ `google_*` types — instead of a thin vertical through Cloud Run only |
+| G3 | GCP's HTTP load-balancer chain stays 4–5 separate nodes (forwarding rule → target proxy → URL map → backend service → NEG), not collapsed into one; the internal chain hops are priced at 0 ms so the shape is visible without inventing latency |
+| G4 | The AWS-subtype behaviour tables inside the engine become **provider-owned** — every `Normaliser` declares its own; the AWS tables move into `AwsNormaliser` unchanged |
+| G5 | GCP documentation lives in `docs/gcp/` (overview, decisions, type map, testing, changes) |
+| G6 | GCP capacity modelling (`--walker load`) is deferred to a later work package — latency first |
+
+### Found — three ways GCP gets a confident wrong answer today
+
+- **Regions vanish.** `parsers/terraform/loader.py:167` skips every provider block whose
+  name is not `aws`, so a `google` provider's region never reaches `RawResource.region`.
+  Every GCP node lands with `region=None`, and `latency/rules/distance.py` then prices
+  every hop as `same_region_unknown_az` — 0.5 ms where a cross-region hop is 120.
+- **INVOKE hops are free.** `latency/rules/processing.py:37` maps a subtype to the key an
+  incoming call costs. A subtype missing from that table falls through `:58` with
+  `key = None` and the rule returns `{}` — no processing at all, silently.
+- **Cold starts never fire.** `latency/rules/cold_start.py` (then line 16) returned early unless
+  `dst.subtype == "lambda"`, so Cloud Run and Cloud Functions would show a cold-start
+  cost of zero even with `cold` / `cold_prob` in the profile.
+
+All three fail *quietly*: a plausible number, no warning. They are the reason G4 exists —
+the tables that decide these three answers have to belong to the provider, not the engine.
+
+### Also found
+
+- The `distance.<cloud>` block that `CODE_FLOW.md` §5 promised a new cloud must add
+  **does not exist**. `latency/defaults.yaml:11` is one flat global `distance` block and
+  `latency/rules/distance.py` is its only consumer. GCP region names do not collide with
+  AWS ones, so GCP pairs merge straight into the flat `cross_region` map. The row is
+  corrected in this round's `CODE_FLOW.md` edit.
+- Phase 3's "only new registrations" rule does not survive contact with GCP:
+  `core/pipeline.py:51` picks the normaliser from config with no detection, `core/models.py:252`
+  strips `.aws_` only (GCP node ids would render unshortened), and `core/interfaces.py:156`
+  enumerates AWS subtypes inside the `MetricSource` ABC. Each is a real engine edit, and each
+  now has a row in `DECISIONS.md` §10 before any code moves.
+
+### Delivered
+
+- **Doc set** under `docs/gcp/`: `00-OVERVIEW.md` (index), `01-DECISIONS.md` (G1–G6 in
+  `DECISIONS.md`'s shape), `02-TYPE-MAP.md` (the evidence-backed `google_*` → kind/subtype
+  table), `03-TESTING.md` (what to test, with which fixture), `04-CHANGES.md` (the execution
+  record, one entry per work package).
+- **Seven public GCP Terraform repositories licence-checked as vendorable fixtures** — all
+  Apache-2.0, so they can be vendored under `examples/real-world/` with an `ATTRIBUTION.md`
+  the way the AWS corpus already is. Listed in `docs/gcp/03-TESTING.md`.
+- **Existing docs updated**: `DECISIONS.md` §10 + the D8 amendment, `SPEC.md` §3 / §8 / §9,
+  `CODE_FLOW.md` §5, `README.md` "GCP input", `CONTRIBUTING.md` "A cloud provider".
+
+### Next
+
+Round 2 is implementation, sequenced in `docs/gcp/04-CHANGES.md`: loader provider fix →
+provider-owned subtype tables → the `gcp` normaliser → auto-detection → inference rules →
+latency numbers → examples and vendored fixtures.
+
 ## Milestones
 
 | # | Goal | Deliverable / acceptance | Status | Date |
@@ -473,7 +536,7 @@ Estimated: M1–M3 ≈ 1 week (demo-able), M0–M6 ≈ 2 weeks, M7 additive. Act
 |---|---|---|---|---|
 | M9 | Servers + Kubernetes | `generic` normaliser with `sites.yaml` / `distance.custom`; hcloud / DigitalOcean / Proxmox / vSphere / libvirt type maps; `remote-exec` as "provisioned on host" evidence; Kubernetes manifests / Helm-template adapter (Deployment env, Service→Deployment, Ingress/HTTPRoute, replicas/HPA → capacity) | ⏳ | |
 | M10 | Azure | `azurerm` normaliser + rules (private_endpoint, app_settings, role_assignment, APIM backend/policy, Logic App actions, Event Grid, backend pools, VNet peering/vWAN); region-pair defaults; ARM/Bicep parser; `azapi_resource` bodies; one example | ⏳ | |
-| M11 | GCP | `google` normaliser + rules (forwarding_rule→url_map→backend_service→NEG→Cloud Run, Eventarc, Pub/Sub push, Workflows YAML, IAM via service accounts, PSC); inter-region defaults; `.tofu` | ⏳ | |
+| M11 | GCP | `google` normaliser + rules (forwarding_rule→url_map→backend_service→NEG→Cloud Run, Eventarc, Pub/Sub push, Workflows YAML, IAM via service accounts, PSC); inter-region defaults; `.tofu` | 🔨 | |
 | M12 | More IaC formats | Pulumi `stack export`, CDKTF `cdk.tf.json`, Config Connector KRM, OpenTofu extras | ⏳ | |
 | M13 | Servers without Terraform | Docker Compose, Ansible inventory + roles, Nomad, PaaS config files, Cloudflare Workers / Vercel | ⏳ | |
 | M14 | Live-account readers (the plug) | `INVENTORY_SOURCES` registry configured like `calibrate.sources`; AWS Config / Resource Explorer, Azure Resource Graph, GCP Cloud Asset Inventory; read-only; tested with a fake inventory | ⏳ | |

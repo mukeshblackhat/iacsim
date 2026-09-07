@@ -32,7 +32,7 @@ Line numbers marked `~` are approximate for files being edited in the current pa
 
 | id | The question | Options | Chose | Why | In code |
 |---|---|---|---|---|---|
-| **D8** | Should every choice be swappable? | Hard-code and refactor later · **interface + registry + config key for every choice** | **Plug-and-play everywhere — 10 extension points** (parser, normaliser, inference rule, scenario source, profile source, cost rule, walker, analyzer, reporter, metric source) | The user's rule: "everything plug-and-play so it can be changed later". Cost: a few hundred lines of scaffolding. Payoff: Azure, a Datadog source, or a new reporter is one file, no fork. | `iacsim/core/interfaces.py:151-160`, `iacsim/core/registry.py:35`, `plugins/README.md` |
+| **D8** | Should every choice be swappable? | Hard-code and refactor later · **interface + registry + config key for every choice** | **Plug-and-play everywhere — 10 extension points** (parser, normaliser, inference rule, scenario source, profile source, cost rule, walker, analyzer, reporter, metric source) | The user's rule: "everything plug-and-play so it can be changed later". Cost: a few hundred lines of scaffolding. Payoff: a Datadog source, an inference rule or a new reporter is one file, no fork. **Amended by M11 (§10, G4):** a new *cloud* is not. GCP also needs the engine's AWS-subtype tables to become provider-owned and the provider to be auto-detected — two edits inside `core/`, not registrations. | `iacsim/core/interfaces.py:151-160`, `iacsim/core/registry.py:35`, `plugins/README.md` |
 | **D9** | How do stages talk? | Direct calls / shared state · **one fixed IR** | **IR-only contract, versioned (`schema_version`)** | A new parser or latency model never touches the simulator; old `graph.json` stays readable. | `iacsim/core/models.py:1-15`, `iacsim/core/models.py:122` |
 | **D10** | Where do settings come from? | Flags only · file only · **layered** | **CLI flags > `iacsim.yaml` in the target dir > built-in `DEFAULTS`**; every key optional | Zero config works; a team pins choices per repo; a flag wins for one run. | `iacsim/core/config.py:16-68`, `iacsim/core/config.py:95` |
 | **D11** | Bug: a `--profile` set in one run leaked into the next in-process `Config` | Keep the shallow copy · **real deep copy** | **`copy.deepcopy(DEFAULTS)`** | Found by the CLI tests in M6; the first-level dicts were shared with `DEFAULTS`. | `iacsim/core/config.py:111-114` |
@@ -143,7 +143,30 @@ These come from three review passes and are being implemented now; numbers users
 
 ---
 
-## 10. Parked on purpose
+## 10. GCP — M11 (G1–G6)
+
+The first non-AWS cloud. The long form — the options weighed, the evidence behind every
+`google_*` type, the fixtures — is in `docs/gcp/01-DECISIONS.md`; these are the rows that
+belong in this index. Status and the three traps found are in `TIMELINE.md` (2026-09-08).
+
+| id | The question | Options we had | What we chose | Why | In code |
+|---|---|---|---|---|---|
+| **G1** | How does iacsim know which cloud a directory is? | Require `provider:` in `iacsim.yaml` · a `--provider` flag · **read it off the resource types** | **Auto-detect from resource-type prefixes (`google_*` → `gcp`); an explicit `provider:` still wins** | Zero config is the promise (D10), and the type prefix is evidence every IaC format already carries. Cost: `build_graph` gains a detection step, so this is an engine edit inside `core/`, not a registration. | `iacsim/core/pipeline.py:51`, `iacsim/core/config.py:19` |
+| **G2** | How wide is the first GCP slice? | One vertical (Cloud Run only) · **40+ types at once** | **Broad: compute, serverless, the HTTP LB chain, data stores, messaging, orchestration, networking** | A narrow slice turns most of a real GCP repo into `network` placeholder nodes (D20), which reads as "it does not understand GCP". Cost: 40+ type-map rows, each needing its own evidence. | `iacsim/graph/normalisers/aws.py:41`, `iacsim/graph/normalisers/aws.py:74` |
+| **G3** | GCP's HTTP load balancer is 4–5 Terraform resources — one node or many? | Collapse to a single `lb` node · **keep every resource as its own node** | **Forwarding rule → target proxy → URL map → backend service → NEG stay separate; the internal chain hops are priced at 0 ms** | The graph has to be recognisable to whoever wrote the Terraform, and collapsing hides the URL map, which is where routing mistakes live. 0 ms is the honest number — Google publishes no per-stage figure — and the extra hops still show in the A3 shape line. | `iacsim/analyzer/per_category.py:30`, `iacsim/latency/defaults.yaml:11` |
+| **G4** | The engine holds AWS-only subtype tables. Who owns them? | Add GCP keys to the existing tables · **each `Normaliser` declares its own** | **Behaviour tables become provider-owned; `AwsNormaliser` receives today's tables unchanged, `GcpNormaliser` declares its own** | Three tables decide answers *silently*: a subtype missing from the invoke-key table makes the hop cost nothing, the cold-start rule fired only for `subtype == "lambda"`, and `MetricSource.KINDS` enumerates AWS subtypes inside the ABC. Done in WP2: `INVOKE_KEYS` / `COLD_START` live on each `Normaliser`, merged by `behaviour_tables()`; the AWS tables moved verbatim. Adding GCP keys to AWS tables works once and rots at Azure. Cost: the first real engine change of Phase 3 (amends D8, P11). | `iacsim/core/interfaces.py:67-68`, `iacsim/core/interfaces.py:217`, `iacsim/latency/rules/processing.py:47`, `iacsim/latency/rules/cold_start.py:21`, `iacsim/core/interfaces.py:156` |
+| **G5** | Where do GCP's own notes live? | Inline in these files · a separate repo · **`docs/gcp/`** | **`docs/gcp/` — overview, decisions, type map, testing, changes; the root documents keep one row each and link down** | This file stays a one-page index of every choice; 40+ rows of per-type evidence would drown it. | `docs/gcp/01-DECISIONS.md` |
+| **G6** | GCP capacity (`--walker load`) now or later? | With the first slice · **later** | **Deferred to a later work package; the load walker stays AWS-shaped until then** | Capacity needs per-service concurrency semantics — Cloud Run's per-instance concurrency is not Lambda's one-request-per-slot (D34, D35) — and a second set of numbers to justify. Latency first; the walker stays selectable and simply finds no GCP capacity attrs. | `iacsim/simulator/walkers/load.py:101`, `iacsim/simulator/capacity.py:34` |
+
+Known cost of G1 and G4 together: Phase 3's "only new registrations" rule (`TIMELINE.md`, the
+rule under the Phase 3 roadmap) does not hold for a cloud. Two further engine spots follow the
+same pattern and are fixed with the GCP slice: `display_name` strips `.aws_` only, so GCP node
+ids render unshortened (`iacsim/core/models.py:252`), and `MetricSource.KINDS` enumerates AWS
+subtypes inside the ABC (`iacsim/core/interfaces.py:156`).
+
+---
+
+## 11. Parked on purpose
 
 - Reading CDK / Pulumi *source* directly — `cdk synth` / `pulumi stack export` output is enough.
 - X-Ray / OpenTelemetry traces as an edge *validator* — rung 3 of the profile ladder.
@@ -151,7 +174,7 @@ These come from three review passes and are being implemented now; numbers users
 - Calibrating capacity numbers (not just latency) from metrics.
 - A live CloudWatch run against a real account — `aws configure` + one command, when credentials exist.
 
-## 11. How to change a decision
+## 12. How to change a decision
 
 1. **A number** (latency, capacity, sigma): put it in a profile file and pass `--profile`; never edit `defaults.yaml` for one team.
 2. **A behaviour with a config key** (which rules run, which walker, which analyzers, which reporters): edit `iacsim.yaml` next to the Terraform; every key has a default.
