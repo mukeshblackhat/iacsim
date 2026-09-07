@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 .iacsim/
 .terraform/
+!tests/fixtures/**/.terraform/
 .terraform.lock.hcl
 *.tfstate*
 .DS_Store
