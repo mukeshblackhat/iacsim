@@ -226,3 +226,48 @@ def test_provisioner_and_connection_blocks_are_skipped(tmp_path):
     result = TerraformParser().parse(root)
     assert result.warnings == []
     assert "connection" not in _by_address(result)["aws_instance.w"].attrs
+
+
+# ---------------------------------------------------------------- WP1: any provider, not just aws
+
+def test_gcp_provider_blocks_reach_google_resources_and_aws_keeps_its_own():
+    result = TerraformParser().parse(FIXTURES / "gcp")
+    raws = _by_address(result)
+    assert result.warnings == []
+    assert raws["google_cloud_run_v2_service.api"].region == "us-central1"        # provider "google"
+    assert raws["google_compute_instance.beta"].region == "europe-west1"          # provider = google-beta (bare)
+    assert raws["google_sql_database_instance.eu"].region == "europe-west4"       # provider = google-beta.eu
+    assert raws["aws_s3_bucket.assets"].region == "us-east-1"                     # mixed dir: aws is untouched
+
+
+def test_provider_zone_rides_along_in_attrs_when_the_provider_declares_one():
+    raws = _parse("gcp")
+    assert raws["google_cloud_run_v2_service.api"].attrs["_provider_zone"] == "us-central1-a"
+    assert "_provider_zone" not in raws["google_compute_instance.beta"].attrs     # google-beta sets no zone
+    assert "_provider_zone" not in raws["aws_s3_bucket.assets"].attrs
+
+
+def test_hyphenated_providers_map_into_child_modules():
+    raws = _parse("gcp")
+    assert raws["module.svc.google_cloud_run_v2_service.this"].region == "us-central1"   # google = google
+    assert raws["module.svc.google_cloud_run_v2_service.this"].attrs["_provider_zone"] == "us-central1-a"
+    assert raws["module.svc.google_compute_instance.this"].region == "europe-west4"      # google-beta = google-beta.eu
+
+
+def test_region_fallback_option_applies_to_google_providers_too(tmp_path):
+    root = _project(tmp_path, {"main.tf": 'variable "r" {}\nprovider "google" { region = var.r }\n'
+                                          'resource "google_storage_bucket" "b" { name = "x" }\n'})
+    without = TerraformParser().parse(root)
+    assert _by_address(without)["google_storage_bucket.b"].region is None
+    assert any("provider google: region not resolved" in w and "pass --region" in w for w in without.warnings)
+    with_region = TerraformParser(region="europe-west2").parse(root)
+    assert _by_address(with_region)["google_storage_bucket.b"].region == "europe-west2"
+    assert not any("pass --region" in w for w in with_region.warnings)
+
+
+def test_region_fallback_applies_when_a_provider_block_is_absent_entirely(tmp_path):
+    root = _project(tmp_path, {"main.tf": 'resource "google_cloud_run_v2_service" "s" { name = "s" }\n'
+                                          'resource "aws_s3_bucket" "b" { bucket = "x" }\n'})
+    raws = _by_address(TerraformParser(region="asia-south1").parse(root))
+    assert raws["google_cloud_run_v2_service.s"].region == "asia-south1"
+    assert raws["aws_s3_bucket.b"].region == "asia-south1"

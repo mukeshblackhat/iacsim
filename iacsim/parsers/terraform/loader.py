@@ -9,7 +9,13 @@ One ModuleInstance per module *instance* — a `module "x"` block with
     outputs     name → raw expression         evaluated lazily, memoised
     modules     name → block                  children, created lazily
     resources   [(type, name, body)]          expanded lazily, memoised
-    regions     "aws" / "aws.<alias>" → region string   (provider blocks + `providers` map)
+    regions     provider key → region string      (provider blocks + `providers` map)
+    zones       provider key → zone string        (GCP provider blocks carry one)
+
+A provider key is the provider's own name — "aws", "google", "google-beta" —
+or its aliased form, "aws.db" / "google-beta.eu". A resource with no
+`provider =` uses the provider its type names: `google_sql_database_instance`
+→ "google", `aws_lambda_function` → "aws".
 
 Root-only inputs: `terraform.tfvars` / `*.auto.tfvars` (+ `.json`) override
 variable defaults; `workspace` backs `terraform.workspace` (default "default");
@@ -59,7 +65,8 @@ _SOURCE_GLOBS = ("*.tf", "*.tofu", "*.tf.json")
 _TFVARS_GLOBS = ("terraform.tfvars", "terraform.tfvars.json", "*.auto.tfvars", "*.auto.tfvars.json")
 REMOTE_MODULE_HINT = ("resources inside it are not seen; run `terraform init` so iacsim can follow "
                       ".terraform/modules/modules.json")
-_PROVIDER_REF = re.compile(r"^\$\{(\w+)\.(\w+)\}$")
+_PROVIDER_REF = re.compile(r"^\$\{([\w-]+)(?:\.([\w-]+))?\}$")   # "${aws.db}", "${google-beta.eu}"
+_PROVIDER_BARE = re.compile(r"^[\w-]+$")                          # "google-beta" — hcl2 leaves it unwrapped
 
 
 class Warnings:
@@ -120,7 +127,9 @@ class ModuleInstance:
         self._instances: dict[str, ResourceInstances] = {}
         self._in_progress: set[str] = set()
 
-        self.regions = self._resolve_regions(provider_map or {})
+        providers = provider_map or {}
+        self.regions = self._resolve_regions(providers)
+        self.zones = self._resolve_zones(providers)
 
     # ------------------------------------------------------------ loading
 
@@ -157,21 +166,14 @@ class ModuleInstance:
                         self._by_type_name[(rtype, rname)] = (body, str(file))
                         self.resources.append((rtype, rname, body, str(file)))
 
-    def _resolve_regions(self, provider_map: dict[str, str]) -> dict[str, str]:
-        regions: dict[str, str] = {}
-        if self.parent:
-            regions["aws"] = self.parent.regions.get("aws")           # default provider is inherited
-            for child_alias, parent_alias in provider_map.items():
-                regions[child_alias] = self.parent.regions.get(parent_alias)
+    def _resolve_regions(self, provider_map: dict[str, str]) -> dict[str, str | None]:
+        """Provider key → region, for every provider this module configures — not
+        just "aws". A block whose region does not resolve falls back to
+        `default_region` (`--region`) and warns when there is none."""
+        regions = _inherited(self.parent.regions if self.parent else {}, provider_map)
         for block in self.provider_blocks:
-            if block["name"] != "aws":
-                continue
-            alias = _literal(block.get("alias"))
-            key = f"aws.{alias}" if alias else "aws"
-            try:
-                region = evaluate_raw(block.get("region"), self.scope)
-            except (EvalError, ParseError) as e:
-                region = Unresolved(str(e))
+            key = _provider_key(block)
+            region = self._provider_setting(block, "region")
             if not isinstance(region, str):
                 region = self.default_region
                 if region is None:
@@ -179,9 +181,26 @@ class ModuleInstance:
                         f"{self.address_prefix or 'root'} provider {key}: region not resolved; "
                         "pass --region (parsers.terraform.region) to set a fallback")
             regions[key] = region
-        if not regions.get("aws") and not self.parent and self.default_region:
-            regions["aws"] = self.default_region
         return regions
+
+    def _resolve_zones(self, provider_map: dict[str, str]) -> dict[str, str | None]:
+        """Provider key → zone, resolved exactly like the regions. GCP provider
+        blocks carry `zone` ("us-central1-a") beside `region`; AWS blocks have no
+        such argument, so an AWS parse leaves this map empty. Unresolved zones are
+        simply absent — there is no `--zone` fallback and no warning, because a GCP
+        resource usually states its own zone and the provider's is only a default."""
+        zones = _inherited(self.parent.zones if self.parent else {}, provider_map)
+        for block in self.provider_blocks:
+            zone = self._provider_setting(block, "zone")
+            if isinstance(zone, str):
+                zones[_provider_key(block)] = zone
+        return zones
+
+    def _provider_setting(self, block: dict, key: str) -> Any:
+        try:
+            return evaluate_raw(block.get(key), self.scope)
+        except (EvalError, ParseError) as e:
+            return Unresolved(str(e))
 
     # ------------------------------------------------------------ lazy lookups
 
@@ -342,10 +361,18 @@ class ModuleInstance:
                 self.warnings.add(f"{address}.{key}: not evaluated ({e})")
         for label, items in self._dynamic_blocks(address, body.get("dynamic", []), scope).items():
             attrs.setdefault(label, []).extend(items)
+        alias = _provider_alias(body.get("provider"), rtype)
+        zone = self.zones.get(alias)
+        if zone is not None:
+            # RawResource has no zone field, so the provider's zone travels in
+            # `attrs` under a reserved key; a resource that states its own `zone`
+            # is untouched, and the normaliser prefers that one anyway.
+            attrs.setdefault("_provider_zone", zone)
+        region = self.regions.get(alias)
         return RawResource(
             address=address, type=rtype, attrs=attrs,
             references=[a for a in addresses_in(attrs) if a != address],
-            region=self.regions.get(_provider_alias(body.get("provider")), self.regions.get("aws")),
+            region=region if region is not None else self.default_region,
             source_file=file,
         )
 
@@ -435,21 +462,49 @@ def _literal(raw: Any) -> str | None:
     return None
 
 
-def _provider_alias(raw: Any) -> str:
-    """`provider = aws.db` arrives as "${aws.db}" → "aws.db"; absent → "aws"."""
-    if isinstance(raw, str) and (m := _PROVIDER_REF.match(raw)):
-        return f"{m.group(1)}.{m.group(2)}"
-    return "aws"
+def _provider_key(block: dict) -> str:
+    """A provider block's key in the regions/zones maps: "google", "aws.db"."""
+    alias = _literal(block.get("alias"))
+    return f"{block['name']}.{alias}" if alias else block["name"]
+
+
+def _provider_ref(raw: str) -> str | None:
+    """"${aws.db}" → "aws.db", "${aws}" → "aws"; anything else → None."""
+    m = _PROVIDER_REF.match(raw)
+    return ".".join(g for g in m.groups() if g) if m else None
+
+
+def _provider_alias(raw: Any, rtype: str) -> str:
+    """The regions/zones key one resource resolves to.
+
+    `provider = aws.db` arrives as "${aws.db}"; a bare `provider = google-beta`
+    arrives unwrapped, with no "${}" at all. With no `provider =`, the resource
+    uses the provider its own type names — "google_compute_instance" → "google".
+    """
+    if isinstance(raw, str):
+        if ref := _provider_ref(raw):
+            return ref
+        if _PROVIDER_BARE.match(raw):
+            return raw
+    return rtype.split("_", 1)[0]
 
 
 def _provider_map(raw: Any) -> dict[str, str]:
-    """`providers = { aws = aws.db }` → {"aws": "aws.db"}; `{ aws = aws }` → {"aws": "aws"}."""
+    """`providers = { aws = aws.db }` → {"aws": "aws.db"}; `{ aws = aws }` → {"aws": "aws"};
+    hyphens survive on both sides: `{ google-beta = google-beta.eu }`."""
     if not isinstance(raw, dict):
         return {}
     out = {}
     for child_alias, parent in raw.items():
-        child_key = unquote_key(child_alias)
         if isinstance(parent, str):
-            m = _PROVIDER_REF.match(parent)
-            out[child_key] = f"{m.group(1)}.{m.group(2)}" if m else unquote_key(parent)
+            out[unquote_key(child_alias)] = _provider_ref(parent) or unquote_key(parent)
     return out
+
+
+def _inherited(parent: dict[str, str | None], provider_map: dict[str, str]) -> dict[str, str | None]:
+    """What a child module starts from: every un-aliased provider of its parent
+    ("aws", "google" — aliases are only ever passed explicitly), then whatever
+    `providers = { google-beta = google-beta.eu }` remaps onto the child's keys."""
+    values = {key: value for key, value in parent.items() if "." not in key}
+    values.update({child: parent.get(parent_key) for child, parent_key in provider_map.items()})
+    return values
