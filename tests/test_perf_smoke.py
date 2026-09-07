@@ -34,21 +34,32 @@ def _ms(fn) -> float:
     return (time.perf_counter() - t) * 1000
 
 
+def _clear_parser_caches() -> None:
+    from iacsim.parsers.terraform import hcl_expr, loader
+    loader._DOC_CACHE.clear()
+    hcl_expr._parse_attribute_str.cache_clear()
+
+
 def test_second_parse_of_the_same_stack_is_cached():
+    """Relative, not absolute: a coverage-instrumented CI box is 5-20x slower than a laptop,
+    but the cache ratio holds anywhere. Locally: cold ~80 ms, warm ~18 ms."""
     cfg = load_config(FOOSH)
-    build_graph(FOOSH, cfg)                       # warm: parses every file once
-    assert _ms(lambda: build_graph(FOOSH, cfg)) < 50      # measured ~6 ms; was ~137 ms before the cache
+    _clear_parser_caches()
+    cold = _ms(lambda: build_graph(FOOSH, cfg))      # parses every file
+    warm = min(_ms(lambda: build_graph(FOOSH, cfg)) for _ in range(3))
+    assert warm < cold * 0.6, f"cache not helping: cold {cold:.0f} ms, warm {warm:.0f} ms"
+    assert warm < 1000                                 # generous absolute bound, CI-safe
 
 
 def test_run_and_plugins_wall_time_are_bounded(foosh_copy):
     t = time.perf_counter()
     r = subprocess.run([*IACSIM, "run", str(foosh_copy), "-o", "json"], capture_output=True, cwd=ROOT, check=False)
     assert r.returncode == 0, r.stderr
-    assert time.perf_counter() - t < 1.5                   # measured ~0.16 s
+    assert time.perf_counter() - t < 5.0                   # measured ~0.16 s; generous for CI
     t = time.perf_counter()
     r = subprocess.run([*IACSIM, "plugins"], capture_output=True, cwd=ROOT, check=False)
     assert r.returncode == 0, r.stderr
-    assert time.perf_counter() - t < 0.5                   # measured ~0.06 s
+    assert time.perf_counter() - t < 2.0                   # measured ~0.06 s; generous for CI
 
 
 def test_caches_change_no_output(foosh_copy):
