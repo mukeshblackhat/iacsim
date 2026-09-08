@@ -16,8 +16,8 @@ the file opens from `file://` and can be sent to someone as it is.
 
 The template is read by path, not imported: `iacsim.viewer` pulls in
 `http.server` and `webbrowser`, which a reporter has no business loading.
-`render_diff` is deliberately minimal for now — the diff page is completed
-in a later work package; it exists so `iacsim diff -o html` never tracebacks.
+`render_diff` inlines the diff.json contract plus both graphs (`graphs.before` /
+`graphs.after`) so the page can draw the after map with the removed nodes ghosted.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ PLACEHOLDER = "__IACSIM_DATA__"
 
 # (key, title) in the order `BriefBuilder.build()` emits them, then the capacity
 # brief (`build_capacity()`): its title first, then its three sections.
-SECTION_TITLES: tuple[tuple[str, str], ...] = (
+REPORT_SECTIONS: tuple[tuple[str, str], ...] = (
     ("where", "Where the time goes"),
     ("bottlenecks", "Top bottlenecks"),
     ("recommendations", "Recommendations"),
@@ -49,6 +49,16 @@ SECTION_TITLES: tuple[tuple[str, str], ...] = (
     ("p99_sweep", "p99 by users"),
     ("saturation", "What breaks first"),
 )
+# The diff page (`DiffBriefBuilder.build()`): the graph brief's one section, then
+# the per-scenario sections; "Recommendations" is shared with the report group.
+DIFF_SECTIONS: tuple[tuple[str, str], ...] = (
+    ("what_changed", "What changed in the infrastructure"),
+    ("where_shift", "Where the time goes — shift"),
+    ("hops_changed", "Hops that changed"),
+    ("bottleneck_shift", "Bottleneck shift"),
+)
+DIFF_ORDER: tuple[str, ...] = ("what_changed", "where_shift", "hops_changed", "bottleneck_shift", "recommendations")
+SECTION_TITLES: tuple[tuple[str, str], ...] = (*REPORT_SECTIONS, *DIFF_SECTIONS)
 
 
 @REPORTERS.register("html")

@@ -11,10 +11,12 @@ from conftest import EXAMPLES, tiny_graph
 from iacsim.core.config import load_config
 from iacsim.core.interfaces import REPORTERS, ReporterOptions
 from iacsim.reporter._brief import BriefBuilder
-from iacsim.reporter.html_ import SECTION_TITLES, HtmlReporter, _embed, render_page
+from iacsim.reporter._diff_brief import DiffBriefBuilder
+from iacsim.reporter.html_ import DIFF_ORDER, REPORT_SECTIONS, SECTION_TITLES, HtmlReporter, _embed, render_page
 from iacsim.reporter.json_ import JsonReporter
 
-TITLES = [title for _key, title in SECTION_TITLES]
+TITLES = [title for _key, title in REPORT_SECTIONS]
+DIFF_TITLES = [dict(SECTION_TITLES)[key] for key in DIFF_ORDER]
 
 
 def _run(name: str, **overrides):
@@ -83,14 +85,41 @@ def test_options_reach_the_page(classic_web_run):
         render_page({}, kind="nope")
 
 
-def test_diff_html_renders():
+@pytest.fixture(scope="module")
+def classic_web_diff():
     from iacsim.diff.differ import run_diff
     before, after = EXAMPLES / "classic-web", EXAMPLES / "classic-web-bad"
-    report, g_before, g_after = run_diff(before, load_config(before), after, load_config(after))
+    return run_diff(before, load_config(before), after, load_config(after))
+
+
+def test_diff_section_titles_match_brief(classic_web_diff):
+    """The diff page's headings are held to `DiffBriefBuilder` the way the report's
+    are to `BriefBuilder`: every heading it emits is a known title, in the diff
+    group's order, and the classic-web diff exercises every one of them."""
+    diff, g_before, g_after = classic_web_diff
+    seen: set[str] = set()
+    for brief in DiffBriefBuilder(g_before, g_after).build(diff):
+        titles = [s.title for s in brief.sections]
+        assert [t for t in DIFF_TITLES if t in titles] == titles, titles
+        seen.update(titles)
+    assert seen == set(DIFF_TITLES)
+    assert not (set(DIFF_TITLES) - {"Recommendations"}) & set(TITLES)   # the diff group is its own
+
+
+def test_diff_html_renders(classic_web_diff):
+    report, g_before, g_after = classic_web_diff
     html = REPORTERS.get("html")().render_diff(report, g_before, g_after)
     blob = json.loads(html.split('id="iacsim-data">', 1)[1].split("</script>", 1)[0])
-    assert blob["kind"] == "diff" and blob["diff"]["graph"]["nodes_moved"]
+    assert blob["kind"] == "diff"
+    moves = {(m["field"], m["before"], m["after"]) for m in blob["diff"]["graph"]["nodes_moved"]}
+    assert ("region", "us-east-1", "eu-west-1") in moves
     assert set(blob["diff"]["graphs"]) == {"before", "after"} and blob["diff"]["generated_at"]
+    for title in DIFF_TITLES:
+        assert title in html
+    page_load = next(s for s in blob["diff"]["scenarios"] if s["name"] == "page_load")
+    assert f"{page_load['delta_ms']:+.1f}" == "+298.8"          # the page's `signed()` prints this string
+    keys = [s["key"] for s in blob["sections"]]
+    assert keys[-4:] == ["what_changed", "where_shift", "hops_changed", "bottleneck_shift"]
 
 
 def test_findings_the_rail_and_tables_read(classic_web_bad_run, foosh_run, sampled_run):
@@ -133,3 +162,14 @@ def test_findings_the_rail_and_tables_read(classic_web_bad_run, foosh_run, sampl
         assert tail[0]["subject"] == "p99 − p50" and tail[0]["refs"] == []
         assert all(" → " in t["subject"] and len(t["refs"]) == 1 for t in tail[1:])
     assert dict(SECTION_TITLES)["tail_risk"] == "Tail risk (p99 − p50)"
+
+
+def test_drawer_and_keyboard_shell_in_the_page():
+    """WP3: the drawer, its close button, the skip link and the reduced-motion rule
+    are in the static page — not conjured by script — so they hold with no data."""
+    html = render_page({"schema_version": "2", "graph": tiny_graph().to_dict(), "scenarios": [], "capacity": {},
+                        "profile": {"sources": []}, "generated_at": ""})
+    assert 'id="drawer" role="dialog" aria-modal="false"' in html
+    assert 'class="drawer-close"' in html
+    assert html.index('class="skip" href="#tables"') < html.index('id="header"')   # the first focusable thing
+    assert "prefers-reduced-motion: reduce" in html and ":focus-visible" in html
