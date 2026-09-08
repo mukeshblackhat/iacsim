@@ -182,3 +182,92 @@ the chain priced normally; `iacsim/latency/defaults.yaml` — `forwarding_rule.r
 Tests: chain graph spanning two regions, chain-internal hops 0, ends priced.
 
 Verification: `pytest -q` → **381 passed**; ruff clean.
+
+### WP7b — the example pair, the fixture tests, repo hygiene (2026-09-08)
+
+**For the user:** `examples/gcp-web` / `gcp-web-bad` are the GCP twins of
+`classic-web` / `classic-web-bad`; `iacsim diff` between them reports
+`page_load` 160 → 558 ms, all of it the database moving to `europe-west1`. And
+four things the vendored fixtures proved wrong are fixed: a Cloud Run
+`dynamic "env"` block nested inside `containers {}` is now read (before, the
+Memorystore edge of the flagship fixture did not exist), Terraform's `$${`
+escape is no longer evaluated as an interpolation, a Private Service Connect
+forwarding rule (`load_balancing_scheme = ""`) is no longer a public entry
+point, and `provider "kubernetes"` no longer warns that its region did not
+resolve. `make check` is green on the whole tree for the first time since the
+GCP fixtures landed.
+
+Created: `examples/gcp-web/` (`main.tf`, `variables.tf`, `outputs.tf`,
+`scenarios.yaml`) — `internet → global forwarding rule → HTTPS proxy → URL map
+→ backend service → serverless NEG → Cloud Run → Cloud SQL (+ Memorystore)`,
+one region, no local modules, no `iacsim.yaml` (auto-detection is the
+documented choice). The Cloud Run → Cloud SQL edge has both kinds of evidence:
+a `DB_INSTANCE` env var naming `connection_name` (plus the
+`volumes.cloud_sql_instance` mount) and a `roles/cloudsql.client` grant on the
+service account, so the edge's rule is `env_var+gcp_iam_binding`. Every link of
+the LB is a step in `scenarios.yaml` — the traversal follows edges, it does not
+path-find. `examples/gcp-web-bad/` — the same files; the whole diff is the
+header comment, `provider "google" { alias = "db" }`, `provider = google.db` +
+`region = var.db_region` on the instance, and the `db_region` variable. A GCP
+VPC is global, so there is no peering to add and the graph diff is exactly one
+`nodes_moved` entry. `tests/test_example_gcp_web.py` (16 tests: placement,
+the internet entering at the chain head only, every chain link with the
+attribute it follows in the evidence, exact edge count 8, timing recomputed
+from the profile — `2·internet_to_edge + forwarding_rule.route`, four 0 ms
+chain hops, `2·same_region_unknown_az + warm + cold·cold_prob`, two
+`cloud_sql.read`, `respond` — and `total == sum(hops)` for every scenario).
+`tests/test_example_gcp_diff.py` (13 tests: delta `= 2 × 2 reads ×
+(cross_region[europe-west1/us-central1] − same_region_unknown_az)` from the
+profile, the two Cloud SQL hops the only changed ones, the four chain hops 0 ms
+on both sides (G9), one `nodes_moved`, no edges added, the co-locate
+recommendation, `--fail-on-regression 50ms` exits 2, `--scenario cached_page`
+exits 0).
+
+Modified — tests: `tests/conftest.py` (`gcp_web` / `gcp_web_run` /
+`gcp_web_bad` / `gcp_web_bad_run`, session-scoped). `tests/test_real_world.py`
+— seven `MIN_NODES` entries at the exact non-network counts `iacsim graph`
+reports (`ntier 10, glb-mig 5, multiregion 11, functions 13, gke 2, eventarc
+3, lb-regional 5`), `KNOWN_WARNINGS` **unchanged**, `test_run_exits_zero` now
+also asserts an inferred scenario exists exactly when the graph has an
+`internet` entry, and eight per-fixture tests: the full chain sequence in
+`gcp-glb-mig-backend` and the identical edge shape from the `region_*` twins in
+`gcp-lb-regional`; both regions reachable from one forwarding rule and every
+chain hop 0 ms into both regions in `gcp-cloudrun-multiregion-glb`;
+`topic → subscription (PUBLISH) → function (CONSUME)` in
+`gcp-functions-firestore-pubsub`; `attrs["workflow"]` and the `Choice → run_job`
+edge in `gcp-eventarc-workflows-run`; `kubernetes_config_map` and the
+`kubernetes` provider silent in `gcp-gke-multitenant`; `cloud_run → cloud_sql`
+(`env_var+gcp_iam_binding`) and `cloud_run → memorystore` (`env_var`) behind the
+full chain in `gcp-ntier-serverless-web`, with the PSC endpoint present as a
+node but not an entry.
+
+Modified — `iacsim/`, each forced by a fixture:
+
+| file | change | fixture that proved it |
+|---|---|---|
+| `iacsim/parsers/terraform/loader.py` | new `_evaluate_block`: walks a static block's value and expands any `dynamic` list it meets (the top-level path already did this; a `dynamic "env"` under `template { containers { } }` was left verbatim in the attrs) | `gcp-ntier-serverless-web` — no `REDIS_HOST` edge |
+| `iacsim/parsers/terraform/hcl_expr.py` | `_scan_string` treats `$${` as the literal escape it is, kept as written so `heredoc_body`'s existing `$${` → `${` step still applies | `gcp-eventarc-workflows-run` — `not evaluated (trailing tokens … sys.get_env(…))` |
+| `iacsim/parsers/terraform/loader.py` | `_REGIONAL_PROVIDERS = {aws, google, google-beta}`: "region not resolved" fires only for those or for a block that declares `region`; `kubernetes` / `random` / `archive` blocks have no region to resolve | `gcp-gke-multitenant` — `provider kubernetes: region not resolved` |
+| `iacsim/graph/normalisers/gcp.py` | `_public_chain_head`: a forwarding rule is an entry only when `load_balancing_scheme` is absent, unresolved, or `EXTERNAL*` — `INTERNAL*` and `""` (PSC) are not | `gcp-ntier-serverless-web` — `internet → cloudsql-psc-endpoint` and a phantom inferred scenario |
+
+Modified — hygiene: `Makefile` `examples` target (+6 GCP lines);
+`examples/real-world/README.md` (the two rows WP7a recorded with
+`state machine definition could not be read` and `trailing tokens` corrected to
+what the tool emits now; the "until auto-detection lands" sentence replaced);
+`docs/gcp/03-TESTING.md` (checkboxes ticked with a `*WP7b:*` note where the
+reality differs from the plan — `MIN_NODES` at exact counts, chain hops are
+`{distance: 0, processing: 0}` not `{}`, no cross-region *hop* exists in the
+multi-region fixture under G9, `gcp-functions-firestore-pubsub` emits `region
+unknown` for its global Pub/Sub resources without `--region` because it has no
+provider block).
+
+Judgement calls: `basename()` stays an unknown function (a named `not
+evaluated` warning already covered by `KNOWN_WARNINGS`; implementing Terraform
+built-ins is not this package's job). Cloud SQL in the example is
+`availability_type = "REGIONAL"`, so its `az` is `None` on purpose and the hop
+prices as `same_region_unknown_az`. `MIN_NODES` are the exact counts rather
+than loose lower bounds so a type dropping out of `TYPE_MAP` fails there first.
+
+Verification: `pytest -q` → **463 passed**; coverage **94 %** (gate 85);
+`make examples` green including the six new lines; `ruff` clean;
+`tests/fixtures/foosh_report_sha256.txt` unmoved.

@@ -89,6 +89,12 @@ def _scan_string(src: str, start: int) -> tuple[list, int]:
         if ch == "\\" and i + 1 < len(src):
             buf.append({"n": "\n", "t": "\t", '"': '"', "\\": "\\"}.get(src[i + 1], src[i + 1]))
             i += 2
+        elif src.startswith("$${", i):
+            # Terraform's escape: literal "${", not an interpolation. Kept as written
+            # (`$${`) so downstream readers of heredoc bodies — a Workflows YAML with
+            # `$${sys.get_env(...)}` expressions — see exactly the source text.
+            buf.append("$${")
+            i += 3
         elif src.startswith("${", i):
             if buf:
                 parts.append("".join(buf))

@@ -182,7 +182,7 @@ IAM_GRANT = re.compile(r"^google_.*_iam_(member|binding|policy|audit_config)$")
 
 # Attributes worth keeping on the node — scalars only; nested facts are flattened
 # by _capacity_attrs so a Cloud Run container spec never lands in graph.json.
-KEEP_ATTRS = ("region", "zone", "location", "network", "subnetwork",
+KEEP_ATTRS = ("region", "zone", "location", "location_id", "config", "network", "subnetwork",
               "machine_type", "database_version", "tier", "memory_size_gb", "size_gb", "storage_class",
               "node_count", "initial_node_count", "target_size", "max_instances", "min_instances",
               "enable_cdn", "load_balancing_scheme", "protocol", "port_range", "ip_protocol",
@@ -267,10 +267,23 @@ class GcpNormaliser(Normaliser):
     def _add_internet(graph: InfraGraph) -> None:
         graph.add_node(Node(id=INTERNET, kind=NodeKind.EXTERNAL, subtype="internet", label="internet"))
         for node in list(graph.nodes.values()):
-            if node.kind in ENTRY_KINDS or (node.kind == NodeKind.LB and node.subtype in ENTRY_LB_SUBTYPES):
+            if node.kind in ENTRY_KINDS or (node.kind == NodeKind.LB and _public_chain_head(node)):
                 graph.add_edge(Edge(INTERNET, node.id, EdgeKind.INVOKE, Confidence.HIGH,
                                     f"{node.subtype} {node.label or node.id} is a public entry point",
                                     rule="normaliser"))
+
+
+def _public_chain_head(node: Node) -> bool:
+    """A forwarding rule is a public entry only when its `load_balancing_scheme` is
+    external (the provider default). `INTERNAL*` fronts an internal LB, and `""`
+    is a Private Service Connect endpoint — the consumer side of a Cloud SQL
+    attachment, reached from inside the VPC, never from the internet."""
+    if node.subtype not in ENTRY_LB_SUBTYPES:
+        return False
+    scheme = node.attrs.get("load_balancing_scheme")
+    if not isinstance(scheme, str) or "${" in scheme:
+        return True
+    return scheme.startswith("EXTERNAL")
 
 
 # ------------------------------------------------------------------ capacity (G6, deferred)
@@ -348,11 +361,17 @@ def _put_int(out: dict[str, Any], key: str, value: Any) -> None:
 # ------------------------------------------------------------------ placement
 
 def _placement(r: RawResource, by_address: dict[str, RawResource]) -> Placement:
-    """Resource first, provider second (G10). `location` counts only when it is
+    """Resource first, provider second (G10). A location counts only when it is
     region- or zone-shaped: a multi-region (`US`, `nam5`) is left to the provider
-    fallback rather than written into a field the distance rule compares."""
-    location = _string(r.attrs.get("location"))
-    az = _string(r.attrs.get("zone"))
+    fallback rather than written into a field the distance rule compares.
+
+    Three datastores spell their location differently: Firestore `location_id`,
+    Spanner `config` (`regional-us-central1`, or a multi-region like `nam3`),
+    Bigtable `cluster[].zone`. Read them here or they never place themselves."""
+    location = _string(r.attrs.get("location")) or _string(r.attrs.get("location_id"))
+    if location is None and (config := _string(r.attrs.get("config"))) and config.startswith("regional-"):
+        location = config.removeprefix("regional-")               # Spanner
+    az = _string(r.attrs.get("zone")) or _first_cluster_zone(r.attrs.get("cluster"))   # Bigtable
     if az is None and location and ZONE_RE.match(location):
         az = location
     if az is None and r.type in ZONAL_TYPES:
@@ -370,6 +389,15 @@ def _placement(r: RawResource, by_address: dict[str, RawResource]) -> Placement:
     if subnet and subnet in by_address:
         vpc = vpc or _first_address(by_address[subnet].attrs.get("network"))
     return Placement(region=region, az=az, vpc=vpc, subnet=subnet)
+
+
+def _first_cluster_zone(clusters: Any) -> str | None:
+    """`google_bigtable_instance.cluster[].zone` — the first cluster's zone."""
+    if isinstance(clusters, list):
+        for c in clusters:
+            if isinstance(c, dict) and (z := _string(c.get("zone"))):
+                return z
+    return None
 
 
 def _network_refs(attrs: dict[str, Any]) -> tuple[str | None, str | None]:

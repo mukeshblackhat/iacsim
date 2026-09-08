@@ -59,6 +59,12 @@ from iacsim.parsers.terraform.evaluator import (
 from iacsim.parsers.terraform.hcl_expr import ParseError
 from iacsim.parsers.terraform.tfjson import load_tf_json, load_tfvars_json
 
+# Providers whose resources live in a region even when the block does not say so
+# (the region then comes from the environment, which we cannot see) — the only ones
+# worth a "region not resolved" warning. A `provider "kubernetes" { host = … }` or
+# `provider "random" {}` has no region to resolve, so it is silent.
+_REGIONAL_PROVIDERS = frozenset({"aws", "google", "google-beta"})
+
 _META_KEYS = ("for_each", "count", "provider", "providers", "dynamic", "lifecycle", "source",
               "connection", "provisioner", "timeouts", "__is_block__", "__comments__")
 _SOURCE_GLOBS = ("*.tf", "*.tofu", "*.tf.json")
@@ -176,7 +182,7 @@ class ModuleInstance:
             region = self._provider_setting(block, "region")
             if not isinstance(region, str):
                 region = self.default_region
-                if region is None:
+                if region is None and (block["name"] in _REGIONAL_PROVIDERS or "region" in block):
                     self.warnings.add(
                         f"{self.address_prefix or 'root'} provider {key}: region not resolved; "
                         "pass --region (parsers.terraform.region) to set a fallback")
@@ -355,7 +361,7 @@ class ModuleInstance:
             if key in _META_KEYS:
                 continue
             try:
-                attrs[key] = to_plain(evaluate_raw(raw, scope))
+                attrs[key] = to_plain(self._evaluate_block(address, raw, scope))
             except (EvalError, ParseError, TypeError, ValueError, KeyError, IndexError) as e:
                 attrs[key] = raw
                 self.warnings.add(f"{address}.{key}: not evaluated ({e})")
@@ -376,6 +382,24 @@ class ModuleInstance:
             source_file=file,
         )
 
+    def _evaluate_block(self, address: str, raw: Any, scope: Scope) -> Any:
+        """`evaluate_raw`, plus `dynamic` blocks nested inside a *static* block —
+        `template { containers { dynamic "env" { … } } }` (Cloud Run) — expanded in
+        place. `evaluate_raw` alone leaves such a `dynamic` list verbatim in the
+        attrs, so the env vars it declares are invisible to every inference rule."""
+        if isinstance(raw, list):
+            return [self._evaluate_block(address, v, scope) for v in raw]
+        if isinstance(raw, dict):
+            nested = raw.get("dynamic")
+            has_dynamic = isinstance(nested, list) and all(isinstance(b, dict) for b in nested)
+            out = {unquote_key(k): self._evaluate_block(address, v, scope) for k, v in raw.items()
+                   if k not in ("__is_block__", "__comments__") and not (has_dynamic and k == "dynamic")}
+            if has_dynamic:
+                for label, items in self._dynamic_blocks(address, nested, scope).items():
+                    out.setdefault(label, []).extend(items)
+            return out
+        return evaluate_raw(raw, scope)
+
     def _dynamic_blocks(self, address: str, blocks: list, scope: Scope) -> dict[str, list]:
         """Expand `dynamic "label" { for_each = … content { … } }` blocks, recursively:
         a `content` may itself contain `dynamic` blocks (the iterator variable is the label)."""
@@ -388,7 +412,7 @@ class ModuleInstance:
                     iterator = _literal(body.get("iterator")) or label
                     for key, value in pairs:
                         inner = scope.child({iterator: {"key": key, "value": value}})
-                        plain = {k: to_plain(evaluate_raw(v, inner)) for k, v in content.items()
+                        plain = {k: to_plain(self._evaluate_block(address, v, inner)) for k, v in content.items()
                                  if k not in ("dynamic", "__is_block__", "__comments__")}
                         nested = self._dynamic_blocks(address, content.get("dynamic", []), inner)
                         for sub_label, items in nested.items():

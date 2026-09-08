@@ -1,0 +1,35 @@
+# Request paths for gcp-web. Optional — with no file, iacsim infers
+#   forwarding rule → proxy → URL map → backend → NEG → Cloud Run
+#                                  from the gcp_lb_chain rule (target, url_map,
+#                                  default_service, backend.group, cloud_run.service)
+#   Cloud Run → Cloud SQL          from the DB_INSTANCE env var (connection_name)
+#                                  and the roles/cloudsql.client grant
+#   Cloud Run → Memorystore        from the REDIS_HOST env var
+# Declared here to make the two DB round-trips explicit. Every link of the
+# load balancer is its own node, so the steps name each one — the hops between
+# them cost 0 ms; only the internet → forwarding-rule hop is charged.
+
+page_load:
+  description: "GET /products — one page render, two sequential DB queries"
+  entry: google_compute_global_forwarding_rule.web
+  steps:
+    - google_compute_target_https_proxy.web
+    - google_compute_url_map.web
+    - google_compute_backend_service.web
+    - google_compute_region_network_endpoint_group.web
+    - google_cloud_run_v2_service.web
+    - google_sql_database_instance.db      # query 1: products
+    - google_sql_database_instance.db      # query 2: session
+    - google_cloud_run_v2_service.web
+
+cached_page:
+  description: "GET /products with a warm cache — one Redis read, no database"
+  entry: google_compute_global_forwarding_rule.web
+  steps:
+    - google_compute_target_https_proxy.web
+    - google_compute_url_map.web
+    - google_compute_backend_service.web
+    - google_compute_region_network_endpoint_group.web
+    - google_cloud_run_v2_service.web
+    - google_redis_instance.cache
+    - google_cloud_run_v2_service.web

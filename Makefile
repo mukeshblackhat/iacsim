@@ -30,6 +30,12 @@ examples:                     ## smoke: every example still parses, runs, diffs
 	.venv/bin/iacsim graph examples/real-world/ecs-alb --region us-east-1
 	.venv/bin/iacsim run   examples/real-world/two-tier -o json
 	.venv/bin/iacsim validate examples/real-world/serverless-apigw-lambda-dynamodb
+	.venv/bin/iacsim graph examples/gcp-web
+	.venv/bin/iacsim graph examples/gcp-web-bad
+	.venv/bin/iacsim run   examples/gcp-web -o json
+	.venv/bin/iacsim diff  examples/gcp-web examples/gcp-web-bad -o json
+	.venv/bin/iacsim graph examples/real-world/gcp-glb-mig-backend
+	.venv/bin/iacsim run   examples/real-world/gcp-ntier-serverless-web -o json
 
 hooks:                        ## install the git pre-commit hook
 	printf '#!/bin/sh\nmake check\n' > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit

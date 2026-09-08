@@ -211,3 +211,22 @@ def test_no_gcp_subtype_reuses_an_aws_name_outside_network():
     aws_names = {s for k, s in aws.TYPE_MAP.values() if k not in NOT_A_HOP}
     gcp_names = {s for k, s in gcp.TYPE_MAP.values() if k not in NOT_A_HOP}
     assert not aws_names & gcp_names
+
+
+# ------------------------------------------------------ audit: datastores that spell their location differently
+
+@pytest.mark.parametrize("rtype, attrs, region, az", [
+    ("google_firestore_database", {"name": "db", "location_id": "us-central1"}, "us-central1", None),
+    ("google_firestore_database", {"name": "db", "location_id": "nam5"}, "europe-west1", None),  # multi-region
+    ("google_spanner_instance", {"name": "sp", "config": "regional-us-west1"}, "us-west1", None),
+    ("google_spanner_instance", {"name": "sp", "config": "nam3"}, "europe-west1", None),         # multi-region
+    ("google_bigtable_instance", {"name": "bt", "cluster": [{"cluster_id": "c1", "zone": "us-east1-b"}]},
+     "us-east1", "us-east1-b"),
+])
+def test_datastore_reads_its_own_location_spelling(rtype, attrs, region, az):
+    """Firestore says `location_id`, Spanner says `config`, Bigtable says `cluster[].zone`.
+    Before this test each fell back to the provider region — a silent mis-placement."""
+    raw = RawResources(resources=[RawResource(address=f"{rtype}.x", type=rtype, attrs=attrs,
+                                              region="europe-west1")], format="terraform")
+    node = GcpNormaliser().normalise(raw).nodes[f"{rtype}.x"]
+    assert (node.placement.region, node.placement.az) == (region, az)

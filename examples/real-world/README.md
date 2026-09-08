@@ -12,12 +12,12 @@ parses, builds a graph and runs without crashing — and that every warning it p
 | `ecs-alb` | ALB → ECS service on an EC2 Auto Scaling Group, `count` subnets, `[*]` splat, `templatefile` task definition, provider region from a variable with no default | `region not resolved` (pass `--region`), `data.*` |
 | `two-tier` | classic ELB → EC2 with `provisioner`/`connection` blocks, `terraform.template.tfvars` | none |
 | `eks-cluster` | registry modules only (`terraform-aws-modules/vpc`, `eks`, `iam`) — the graph is empty until `terraform init` has populated `.terraform/modules/modules.json` | `remote source … run terraform init` |
-| `gcp-ntier-serverless-web` | two Cloud Run tiers → Cloud SQL (PSC) + Memorystore Redis behind the full HTTPS LB chain (serverless NEG → backend service → URL map → HTTPS proxy → global forwarding rule), Cloud Armor, DNS, VPC/PSA, `tls_*` resources; one 824-line file, no `module`/`data` blocks | none |
+| `gcp-ntier-serverless-web` | two Cloud Run tiers → Cloud SQL (PSC) + Memorystore Redis behind the full HTTPS LB chain (serverless NEG → backend service → URL map → HTTPS proxy → global forwarding rule), Cloud Armor, DNS, VPC/PSA, `tls_*` resources, a `dynamic "env"` block inside `containers {}`, a PSC endpoint forwarding rule (`load_balancing_scheme = ""`) that must not become a public entry; one 824-line file, no `module`/`data` blocks | none |
 | `gcp-glb-mig-backend` | the canonical minimal global HTTP LB chain onto a MIG — literal regions, no provider block, no variables; the readable "control" when the LB-chain rule breaks | none |
 | `gcp-cloudrun-multiregion-glb` | `count`-fanned Cloud Run services + serverless NEGs across two regions behind one global LB, HTTP→HTTPS redirect `url_map`, `[count.index]` cross-references; every resource sets `provider = google-beta` | none |
-| `gcp-functions-firestore-pubsub` | five Cloud Functions v2 + Firestore + Pub/Sub + Cloud Scheduler, GCS bucket objects named from `data.archive_file` outputs that point outside the fixture, a `gcs` backend | `data.* sources are not evaluated`, `not evaluated (unknown function basename())`, `state machine definition could not be read` (Scheduler jobs) |
-| `gcp-gke-multitenant` | GKE with node pools and workload identity, a second `kubernetes` provider configured from `data.google_client_config`, Cloud SQL beside the cluster | `data.* sources are not evaluated` |
-| `gcp-eventarc-workflows-run` | Eventarc trigger → Workflows → Cloud Run job with service-account IAM bindings as the only edge evidence; inline Workflows YAML with `sys.get_env(...)` | `data.* sources are not evaluated`, `not evaluated (trailing tokens …)`, `state machine definition could not be read` (the Workflows body) |
+| `gcp-functions-firestore-pubsub` | five Cloud Functions v2 + Firestore + Pub/Sub + Cloud Scheduler, GCS bucket objects named from `data.archive_file` outputs that point outside the fixture, a `gcs` backend, no provider block | `data.* sources are not evaluated`, `not evaluated (unknown function basename())`; on `run`, `region unknown` for the global Pub/Sub topic and subscription unless `--region` is passed (nothing to inherit a region from) |
+| `gcp-gke-multitenant` | GKE with workload identity, a second `kubernetes` provider configured from `data.google_client_config` (no region, and it asks for none), a `kubernetes_config_map` dropped silently, Cloud SQL beside the cluster | `data.* sources are not evaluated` |
+| `gcp-eventarc-workflows-run` | Eventarc trigger → Workflows → Cloud Run job; inline Workflows YAML whose `$${sys.get_env(...)}` escapes must stay literal, a `Choice` step that runs the job through an expression-valued `googleapis.run` connector | `data.* sources are not evaluated` |
 | `gcp-lb-regional` | the regional twin of every global LB type — `region_url_map`, `region_target_http_proxy`, `region_backend_service`, `region_health_check`, a plain `forwarding_rule` — plus a proxy-only subnet; catches a `TYPE_MAP` that only knows the global spellings | none |
 
 Run any of them:
@@ -30,8 +30,10 @@ iacsim graph examples/real-world/gcp-glb-mig-backend --region us-central1
 
 The `gcp-*` fixtures come from `terraform-google-modules/terraform-docs-samples` (five), `google/skills`
 and `GoogleCloudPlatform/cloud-release-chat-bot` (one each), all Apache-2.0 — each `ATTRIBUTION.md` names
-the pinned commit. Until GCP auto-detection lands, they need `provider: gcp` in an `iacsim.yaml` (or the
-equivalent config override) to graph as anything other than `unknown type` network nodes.
+the pinned commit. They need no config: `provider: auto` (the default) picks the `gcp` normaliser from the
+`google_*` majority. `--region` matters only where a fixture has no provider block *and* a global resource
+(Pub/Sub in `gcp-functions-firestore-pubsub`); everything else places itself from its own `region` /
+`location` / `zone`. The exact node counts and warning sets are pinned in `tests/test_real_world.py`.
 
 ## Manual-run corpus (not vendored — size or licence)
 

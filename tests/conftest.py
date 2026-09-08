@@ -49,6 +49,18 @@ def foosh_cfn():
     return _build("foosh-cfn")
 
 
+@pytest.fixture(scope="session")
+def gcp_web():
+    """internet → global LB chain → Cloud Run → Cloud SQL + Memorystore, one region (M11)."""
+    return _build("gcp-web")
+
+
+@pytest.fixture(scope="session")
+def gcp_web_bad():
+    """The same stack with Cloud SQL moved to europe-west1 (M11)."""
+    return _build("gcp-web-bad")
+
+
 def edge(graph, src: str, dst: str):
     e = graph.find_edge(src, dst)
     assert e is not None, f"missing edge {src} → {dst}; have: " + "\n".join(f"{x.src} → {x.dst}" for x in graph.edges)
@@ -79,6 +91,16 @@ def foosh_run():
 @pytest.fixture(scope="session")
 def order_queue_run():
     return _run("order-queue")
+
+
+@pytest.fixture(scope="session")
+def gcp_web_run():
+    return _run("gcp-web")
+
+
+@pytest.fixture(scope="session")
+def gcp_web_bad_run():
+    return _run("gcp-web-bad")
 
 
 def result(output, scenario: str):

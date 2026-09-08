@@ -42,9 +42,9 @@ would be a corpus that tests nothing.
 | `gcp-ntier-serverless-web` | `google/skills` @ `d56d145e512d`, path `skills/cloud/google-cloud-solution-n-tier-serverless-web-app/assets` | 1 + 4 + 6 | 1 file, 824 lines, 29 types | 0 | two Cloud Run tiers → Cloud SQL + Memorystore Redis behind the full HTTPS LB chain; Cloud Armor, DNS, VPC/PSA, firewall policy, monitoring alert | none |
 | `gcp-glb-mig-backend` | terraform-docs-samples `lb/external_http_lb_mig_backend` | 4 | 157 lines, 9 resources | 0 | the canonical minimal global HTTP LB chain onto a MIG, literal regions, no provider block, no variables | none |
 | `gcp-cloudrun-multiregion-glb` | terraform-docs-samples `run/multiple_regions` | 4 + 6 | 216 lines, 14 resources | 0 | `count`-fanned Cloud Run + serverless NEGs across two regions, one global LB, HTTP→HTTPS redirect; every resource on `google-beta` | none |
-| `gcp-functions-firestore-pubsub` | `GoogleCloudPlatform/cloud-release-chat-bot` @ `d0463c4e43fe`, path `release/` | 2 | 2 files, 16 KB | 0 | Cloud Functions + Firestore + Pub/Sub; five `data.archive_file` blocks pointing outside the vendored directory | `data.* sources are not evaluated` |
+| `gcp-functions-firestore-pubsub` | `GoogleCloudPlatform/cloud-release-chat-bot` @ `d0463c4e43fe`, path `release/` | 2 | 2 files, 16 KB | 0 | Cloud Functions + Firestore + Pub/Sub; five `data.archive_file` blocks pointing outside the vendored directory; no provider block | `data.* sources are not evaluated`, `not evaluated (unknown function basename())` |
 | `gcp-gke-multitenant` | terraform-docs-samples `gke/quickstart/multitenant` | 3 | 206 lines, 14 resources | 0 | GKE with node pools, a second `kubernetes` provider configured from `data.google_client_config`, workload identity, Cloud SQL beside the cluster | `data.* sources are not evaluated` |
-| `gcp-eventarc-workflows-run` | terraform-docs-samples `workflows/cloud_run_job` | 5 | 226 lines, 17 resources | 0 | Eventarc trigger → Workflows → Cloud Run job; service-account IAM bindings as the only edge evidence | none |
+| `gcp-eventarc-workflows-run` | terraform-docs-samples `workflows/cloud_run_job` | 5 | 226 lines, 17 resources | 0 | Eventarc trigger → Workflows → Cloud Run job; a Workflows body full of `$${…}` escapes | `data.* sources are not evaluated` (two `data` blocks) |
 | `gcp-lb-regional` | terraform-docs-samples `lb/regional_external_http_load_balancer` | 4 (regional) | 13 resources | 0 | the regional half of every global/regional twin type | none |
 
 The six architecture shapes the corpus must cover: **1** Cloud Run + Cloud SQL behind an LB ·
@@ -129,16 +129,17 @@ Pin each clone to the commit in the table before vendoring (`git checkout <commi
 
 ### 1.4 Vendoring checklist
 
-- [ ] Copy only the `.tf` files and the data files they reference — no `.git`, no `README`, no
+- [x] Copy only the `.tf` files and the data files they reference — no `.git`, no `README`, no
       generated `.terraform/`.
-- [ ] Write `ATTRIBUTION.md` in each fixture directory with: the source URL **including the
+- [x] Write `ATTRIBUTION.md` in each fixture directory with: the source URL **including the
       pinned commit**, the commit hash on its own line, and the licence (Apache-2.0).
-- [ ] State that the licence is the repo-root `LICENSE`, and that every terraform-docs-samples
+- [x] State that the licence is the repo-root `LICENSE`, and that every terraform-docs-samples
       `main.tf` also carries the Apache header inline — so the licence travels with the vendored
       file even read on its own.
-- [ ] Add a row per fixture to the table in `examples/real-world/README.md`, in that file's
+- [x] Add a row per fixture to the table in `examples/real-world/README.md`, in that file's
       existing `fixture | what it exercises | expected warnings` shape.
-- [ ] Add each fixture to `MIN_NODES` in `tests/test_real_world.py` — see §3.6, this is the one
+      *WP7b:* rows corrected to what the tool emits now (`state machine definition could not be read` and the `trailing tokens` warning are gone).
+- [x] Add each fixture to `MIN_NODES` in `tests/test_real_world.py` — see §3.6, this is the one
       that fails with a `KeyError` rather than a readable message.
 
 ### 1.5 Ruled out — recorded so nobody re-researches it
@@ -160,9 +161,10 @@ directory, then run `graph`, `validate`, `run`.
 | `terraform-google-modules/terraform-google-lb-http/examples/cloudrun/` (Apache-2.0) | the GCP analogue of the existing `eks-cluster` registry-module fixture: proves the `remote source … run terraform init` path is provider-neutral | empty graph until `terraform init`; one `remote source` warning per registry module |
 | `GoogleCloudPlatform/cloud-foundation-fabric/modules/net-lb-app-ext/` (Apache-2.0) | 13 files, 15 LB resource types; `urlmap.tf` alone is 38 KB of `dynamic` / `for_each` / `optional()` — the hardest HCL-evaluation test in the GCP ecosystem | `dynamic` and `not evaluated` warnings; the value is that nothing crashes and no warning is unnamed |
 
-- [ ] Both manual-run entries added to `examples/real-world/README.md`'s manual-run table.
+- [x] Both manual-run entries added to `examples/real-world/README.md`'s manual-run table.
 - [ ] `net-lb-app-ext` run by hand once per release; record the node count and warning set in the
       M11 notes so a regression in HCL evaluation is visible.
+      *WP7b:* not run — a manual, per-release step; nothing in the tree records it yet.
 
 ---
 
@@ -179,42 +181,47 @@ internet → global HTTP(S) LB → Cloud Run (us-central1) → Cloud SQL (us-cen
                                                        → Memorystore Redis (us-central1)
 ```
 
-- [ ] `main.tf` — provider block with a literal region, the five-resource LB chain, one
+- [x] `main.tf` — provider block with a literal region, the five-resource LB chain, one
       `google_cloud_run_v2_service`, one `google_sql_database_instance`, one
       `google_redis_instance`, and the `google_compute_region_network_endpoint_group` that binds
       the backend service to Cloud Run.
-- [ ] `variables.tf` — `region`, `project`, matching `classic-web`'s shape.
-- [ ] `outputs.tf`.
-- [ ] `scenarios.yaml` — one `page_load` scenario entering at the forwarding rule, with two
+      *WP7b:* region is `var.region` with a `us-central1` default — `classic-web`'s shape — not a literal.
+- [x] `variables.tf` — `region`, `project`, matching `classic-web`'s shape.
+- [x] `outputs.tf`.
+- [x] `scenarios.yaml` — one `page_load` scenario entering at the forwarding rule, with two
       sequential Cloud SQL queries, so the expected total is hand-checkable the way
       `classic-web/scenarios.yaml` is.
-- [ ] `iacsim.yaml` setting `provider: google` (or rely on auto-detection, if §1 of
+      *WP7b:* every chain link is a step (proxy, URL map, backend service, NEG) — the traversal follows edges, it does not path-find, so a scenario that jumped from the forwarding rule straight to Cloud Run would be priced as a synthetic hop with a warning. A second `cached_page` scenario reads Memorystore.
+- [x] `iacsim.yaml` setting `provider: google` (or rely on auto-detection, if §1 of
       `01-DESIGN` chooses that) — whichever, the file must document the choice.
+      *WP7b:* no `iacsim.yaml`; auto-detection (`provider: auto`, the default) is the choice, documented in `main.tf`'s header comment.
 
 ### `examples/gcp-web-bad/` — the twin
 
 Identical to `gcp-web` except the database moves to a second region.
 
-- [ ] `main.tf` — same resources, with a second provider block
+- [x] `main.tf` — same resources, with a second provider block
       (`provider "google" { alias = "db", region = var.db_region }`) and the Cloud SQL instance on
       it, reached over VPC peering / PSA.
-- [ ] Same `variables.tf` plus `db_region`, same `outputs.tf`, same `scenarios.yaml`.
+      *WP7b:* PSA on the same global VPC — no peering resource, so unlike `classic-web-bad` the diff adds no edge. The whole diff is the header comment, the aliased provider, `provider = google.db` + `region = var.db_region` on the instance, and the variable.
+- [x] Same `variables.tf` plus `db_region`, same `outputs.tf`, same `scenarios.yaml`.
 
 ### What the diff must prove
 
-- [ ] `iacsim diff examples/gcp-web examples/gcp-web-bad` reports a total increase equal to
+- [x] `iacsim diff examples/gcp-web examples/gcp-web-bad` reports a total increase equal to
       `2 × queries × (cross_region[us-central1/europe-west1] − same_region_unknown_az)` computed
       from the profile — never a hard-coded millisecond figure.
-- [ ] The node and edge sets are otherwise identical: the diff attributes the whole delta to
+      *WP7b:* `page_load` 160 → 558 ms with the default profile; the key is the sorted `europe-west1/us-central1`.
+- [x] The node and edge sets are otherwise identical: the diff attributes the whole delta to
       placement, not to a shape change.
-- [ ] A `conftest.py` fixture pair exists for each: `gcp_web` / `gcp_web_run` and
+- [x] A `conftest.py` fixture pair exists for each: `gcp_web` / `gcp_web_run` and
       `gcp_web_bad` / `gcp_web_bad_run`, session-scoped, following the existing pattern.
-- [ ] A `tests/test_example_gcp_web.py` written on the `tests/test_example_order_queue.py`
+- [x] A `tests/test_example_gcp_web.py` written on the `tests/test_example_order_queue.py`
       template: docstring naming the topology, node-id constants, a
       `raw.warnings == [] and graph.warnings == []` assertion, per-edge kind/ops/rule/evidence
       assertions, negative assertions (`graph.find_edge(...) is None`), an exact edge count, and
       timing recomputed from profile values.
-- [ ] A `tests/test_example_gcp_diff.py` on the `tests/test_example_diff.py` template.
+- [x] A `tests/test_example_gcp_diff.py` on the `tests/test_example_diff.py` template.
 
 ---
 
@@ -252,8 +259,9 @@ These three catch failures that produce a plausible-looking number instead of an
 - [ ] **AWS behaviour byte-identical after the provider-owned-tables refactor.** Run the existing
       suite unchanged before and after; the 290 existing tests are the regression proof. Assert
       no AWS test file needed an edit — if one did, the refactor changed behaviour, not structure.
-- [ ] Pin the AWS report bytes: `tests/fixtures/foosh_report_sha256.txt` already hashes a full
+- [x] Pin the AWS report bytes: `tests/fixtures/foosh_report_sha256.txt` already hashes a full
       report. It must not move.
+      *WP7b:* unmoved after WP7b's four loader / normaliser fixes.
 
 ### 3.1 Parser layer
 
@@ -386,19 +394,22 @@ Terraform string, `build_graph` on a `tmp_path`, then assertions. Each rule test
 Every timing assertion recomputes the expected total from `default_profile` values. No magic
 numbers.
 
-- [ ] `gcp-web`'s `page_load` total equals a formula built from
+- [x] `gcp-web`'s `page_load` total equals a formula built from
       `p.distance["internet_to_edge"]`, `p.processing["gcp_lb"]["defaults"]["route"]`,
       `p.processing["cloud_run"]["defaults"]`, and `p.processing["cloud_sql"]["defaults"]["read"]`
       — assembled the way `test_place_order_is_the_synchronous_half` assembles the order-queue
       total.
-- [ ] `r.total_ms == pytest.approx(sum(h.latency_ms for h in r.hops))` for every GCP scenario.
-- [ ] **The LB chain's internal hops are 0 ms.** `forwarding_rule → proxy → url_map →
+      *WP7b:* the LB key is `processing["forwarding_rule"]["defaults"]["route"]` (there is no `gcp_lb` block; the chain head charges it).
+- [x] `r.total_ms == pytest.approx(sum(h.latency_ms for h in r.hops))` for every GCP scenario.
+- [x] **The LB chain's internal hops are 0 ms.** `forwarding_rule → proxy → url_map →
       backend_service` are all one Google front-end; only the entry hop and the hop into the
-      backend cost anything. Assert the intermediate hops' `breakdown` is empty, the way
+      backend cost anything. Assert every value in the intermediate hops' `breakdown` is 0 — it is
+      `{distance: 0, processing: 0}`, not `{}`; only the response leg is empty, the way
       `test_page_load_hops_are_priced_by_the_contract` asserts `back.breakdown == {}`.
-- [ ] The hop that *does* cost is charged exactly once: `internet → forwarding_rule` charges
+- [x] The hop that *does* cost is charged exactly once: `internet → forwarding_rule` charges
       `internet_to_edge` plus the LB's `route`, and no other chain hop adds either.
-- [ ] Cold start fires for `cloud_run`: the `cold_start` rule must not be hard-coded to
+      *WP7b:* `internet_to_edge` is doubled like every synchronous distance (request + response).
+- [x] Cold start fires for `cloud_run`: the `cold_start` rule must not be hard-coded to
       `dst.subtype != "lambda"`. Assert `breakdown["cold_start"] == cold * cold_prob` from the
       profile.
 - [ ] Cold start fires for `cloud_functions` on the same terms.
@@ -408,7 +419,7 @@ numbers.
       test.*
 - [ ] A CONSUME hop out of Pub/Sub charges the source's `consume` plus the destination's own
       invoke cost — the source-side pricing case in `processing.py`.
-- [ ] `gcp-web` vs `gcp-web-bad`: the delta equals
+- [x] `gcp-web` vs `gcp-web-bad`: the delta equals
       `2 × queries × (cross_region[<sorted pair>] − same_region_unknown_az)`, read from the
       profile.
 - [ ] GCP inter-region pairs exist in `latency/defaults.yaml`'s `distance.cross_region` map, with
@@ -424,53 +435,62 @@ numbers.
 Driven by the existing auto-discovery in `tests/test_real_world.py` — `_fixtures()` globs
 `examples/real-world/*/`, so all seven are picked up the moment they land on disk.
 
-- [ ] `test_graph_builds_and_every_warning_is_named` passes for all seven (this is automatic once
+- [x] `test_graph_builds_and_every_warning_is_named` passes for all seven (this is automatic once
       `MIN_NODES` has entries).
-- [ ] `test_run_exits_zero` passes for all seven, writing `.iacsim/report.json`.
-- [ ] `gcp-ntier-serverless-web` has **zero** warnings and the full five-node chain is present as
+- [x] `test_run_exits_zero` passes for all seven, writing `.iacsim/report.json`.
+      *WP7b:* and asserts an inferred scenario exists exactly when the graph has an `internet` entry (five of seven; `gcp-functions-firestore-pubsub` and `gcp-gke-multitenant` have no public entry point).
+- [x] `gcp-ntier-serverless-web` has **zero** warnings and the full five-node chain is present as
       edges — the flagship's own named test, in the style of
       `test_ecs_alb_routes_to_the_service_and_sees_the_asg`.
-- [ ] `gcp-glb-mig-backend` produces the minimal chain with zero warnings.
-- [ ] `gcp-cloudrun-multiregion-glb` produces two Cloud Run nodes in two different regions, and
+      *WP7b:* zero warnings needed two fixes — `dynamic "env"` inside `containers {}` was never expanded (no Memorystore edge), and the PSC endpoint forwarding rule was a public entry point.
+- [x] `gcp-glb-mig-backend` produces the minimal chain with zero warnings.
+- [x] `gcp-cloudrun-multiregion-glb` produces two Cloud Run nodes in two different regions, and
       both are reachable from the single global forwarding rule.
-- [ ] `gcp-lb-regional` produces the same edge shape as `gcp-glb-mig-backend` from the `region_*`
+      *WP7b:* and no hop in its inferred paths is priced cross-region — the global backend service fans out to a NEG in each region at 0 ms (G9), so there is no cross-region *hop* in this fixture to assert on; the profile's `europe-west1/us-central1` pair is asserted instead.
+- [x] `gcp-lb-regional` produces the same edge shape as `gcp-glb-mig-backend` from the `region_*`
       types.
-- [ ] `gcp-gke-multitenant` names the `kubernetes` provider in a warning or handles it silently —
+- [x] `gcp-gke-multitenant` names the `kubernetes` provider in a warning or handles it silently —
       whichever, the behaviour is pinned by a test, not left to chance.
-- [ ] Proposed `MIN_NODES` values, each confirmed against real `iacsim graph` output before the
-      test is committed (these are lower bounds to be tightened, not guesses to be trusted):
-      `gcp-ntier-serverless-web: 8`, `gcp-glb-mig-backend: 3`,
-      `gcp-cloudrun-multiregion-glb: 5`, `gcp-functions-firestore-pubsub: 2`,
-      `gcp-gke-multitenant: 3`, `gcp-eventarc-workflows-run: 4`, `gcp-lb-regional: 3`.
+      *WP7b:* silently, with and without `--region`. Before, the loader demanded a region from `provider "kubernetes"`.
+- [x] `MIN_NODES` values confirmed against real `iacsim graph` output (non-network nodes, `internet`
+      excluded) and pinned at the exact counts: `gcp-ntier-serverless-web: 10`,
+      `gcp-glb-mig-backend: 5`, `gcp-cloudrun-multiregion-glb: 11`,
+      `gcp-functions-firestore-pubsub: 13`, `gcp-gke-multitenant: 2` (no `google_container_node_pool`
+      resources in the sample — the guess of 3 was wrong), `gcp-eventarc-workflows-run: 3` (the
+      trigger is glue, not a node), `gcp-lb-regional: 5`.
 
 ### 3.6 Repo hygiene — these break loudly if forgotten
 
-- [ ] **Every new fixture directory is added to `MIN_NODES` in `tests/test_real_world.py`.**
+- [x] **Every new fixture directory is added to `MIN_NODES` in `tests/test_real_world.py`.**
       `_fixtures()` auto-discovers `examples/real-world/*/`, and the test body does
       `MIN_NODES[fixture.name]` — a fixture that is on disk but not in the dict fails with a bare
       `KeyError`, in a test that never mentions the new fixture by name. This is the single most
       confusing failure mode in the repo.
-- [ ] A `conftest.py` fixture **pair** per hand-written example — `gcp_web` (graph) and
+- [x] A `conftest.py` fixture **pair** per hand-written example — `gcp_web` (graph) and
       `gcp_web_run` (run), both `scope="session"`, plus the same for `gcp_web_bad`. Without the
       run half, timing tests re-parse per test and the suite slows measurably.
-- [ ] New GCP lines added to the `examples` target in the `Makefile`: at minimum
+- [x] New GCP lines added to the `examples` target in the `Makefile`: at minimum
       `graph examples/gcp-web`, `graph examples/gcp-web-bad`, `run examples/gcp-web -o json`,
       `diff examples/gcp-web examples/gcp-web-bad -o json`, and one
       `graph examples/real-world/gcp-*` smoke.
-- [ ] `examples/iacsim.yaml` still equals `DEFAULTS` after the new `inference.rules` entries are
+      *WP7b:* plus `run examples/real-world/gcp-ntier-serverless-web -o json`.
+- [x] `examples/iacsim.yaml` still equals `DEFAULTS` after the new `inference.rules` entries are
       added — `tests/test_config_docs.py` asserts exact equality of the parsed YAML and the dict.
       Adding a rule to `DEFAULTS` without editing the YAML fails that test.
-- [ ] Every `path:line` citation added to `DECISIONS.md` or `CODE_FLOW.md` for M11 resolves —
+- [x] Every `path:line` citation added to `DECISIONS.md` or `CODE_FLOW.md` for M11 resolves —
       `tests/test_docs_refs.py` checks that the file exists and the line number is within its
       length. Line numbers move; re-check after the last refactor commit, not before.
+      *WP7b:* WP7b adds no citation; the test is green after its loader edits moved lines.
 - [ ] `DECISIONS.md` gains a row for the GCP decisions (provider-owned tables, `google-beta`
       handling, multi-region location keys) — `CONTRIBUTING.md` requires it.
 - [ ] `TIMELINE.md` M11 row updated.
-- [ ] Coverage stays at or above **85 %** (`make check` → `--cov-fail-under=85`). New table
+- [x] Coverage stays at or above **85 %** (`make check` → `--cov-fail-under=85`). New table
       entries are cheap to cover; new rules are not — each rule needs its own test file or
       coverage drops.
+      *WP7b:* 94 % after WP7b.
 - [ ] `make ci` (= `make check` + `make examples`) green on Python 3.12 and 3.13.
-- [ ] `ruff check iacsim tests` clean at line length 120.
+      *WP7b:* green locally on Python 3.14.3; the 3.12 / 3.13 matrix is CI's, not run here.
+- [x] `ruff check iacsim tests` clean at line length 120.
 
 ---
 
@@ -488,17 +508,18 @@ or a warning already in the list.
 | `gcp-ntier-serverless-web` | none | — | self-contained, no modules, no data sources; the fixture that proves the clean path |
 | `gcp-glb-mig-backend` | none | — | literal regions, no provider block, no variables |
 | `gcp-cloudrun-multiregion-glb` | none | — | `count` and `google-beta` must both resolve; a warning here is a parser bug, not a fixture property |
-| `gcp-functions-firestore-pubsub` | `data.* sources are not evaluated` | `data.* sources are not evaluated` | five `data.archive_file` blocks point outside the vendored directory |
+| `gcp-functions-firestore-pubsub` | `data.* sources are not evaluated`, `not evaluated (unknown function basename())` | `data.* sources are not evaluated`, `not evaluated` | five `data.archive_file` blocks point outside the vendored directory; `basename()` is not in the evaluator's function table (a named limitation, not a GCP gap) |
 | `gcp-gke-multitenant` | `data.* sources are not evaluated` | same | `data.google_client_config` feeds the second provider |
-| `gcp-eventarc-workflows-run` | none | — | if the `gcp_workflows` rule cannot parse `source_contents`, that is a `not evaluated` warning and a rule bug to fix, not a fixture to allowlist |
+| `gcp-eventarc-workflows-run` | `data.* sources are not evaluated` | `data.* sources are not evaluated` | `data.google_project` and `data.google_storage_project_service_account`; the `trailing tokens` warning WP7a saw was the parser evaluating a `$${…}` escape — fixed in WP7b, not allowlisted |
 | `gcp-lb-regional` | none | — | |
 
-- [ ] `KNOWN_WARNINGS` is **unchanged** after M11. If a new phrase is genuinely needed, it is a
+- [x] `KNOWN_WARNINGS` is **unchanged** after M11. If a new phrase is genuinely needed, it is a
       design decision: record it in `DECISIONS.md` with the reason, do not slip it into the tuple.
-- [ ] No fixture emits `region unknown` — that phrase is allowlisted for AWS fixtures that
+- [x] No fixture emits `region unknown` — that phrase is allowlisted for AWS fixtures that
       legitimately need `--region`, and a GCP fixture hitting it means §3.0's region guard-rail
       has failed.
-- [ ] No fixture emits `unknown type google_*` — every type the corpus contains is either mapped
+      *WP7b:* true under the test's `--region`. Without it, `gcp-functions-firestore-pubsub` does emit `region unknown` on `run` for its Pub/Sub topic and subscription — global resources in a fixture with no provider block, so there is nothing to inherit: the `ecs-alb` situation, not a guard-rail failure.
+- [x] No fixture emits `unknown type google_*` — every type the corpus contains is either mapped
       or deliberately ignored. A hit here names a `TYPE_MAP` gap; fix the table, do not accept
       the warning.
 - [ ] Manual-run corpus only: `net-lb-app-ext` may emit `dynamic` and `not evaluated` warnings.
