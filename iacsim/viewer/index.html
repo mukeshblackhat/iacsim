@@ -64,7 +64,7 @@
   #rail:empty, #tables:empty, #capacity:empty, #warnings:empty { display: none; }
   #rail, #tables, #capacity, #warnings { padding: 12px 14px; }
   #tables, #capacity, #warnings { margin: 0 14px 12px; }
-  #drawer { position: absolute; top: 0; right: 0; bottom: 0; width: min(100%, 420px); background: var(--panel); border-left: 1px solid var(--line); box-shadow: -8px 0 24px rgba(0, 0, 0, .12); overflow: auto; padding: 12px 14px; z-index: 6; }
+  #drawer { position: fixed; top: 0; right: 0; height: 100vh; width: min(100vw, 440px); background: var(--panel); border-left: 1px solid var(--line); box-shadow: -8px 0 24px rgba(0, 0, 0, .12); overflow: auto; padding: 12px 14px; z-index: 30; }   /* pinned to the viewport: it stays put while the page scrolls */
   #tooltip { position: absolute; pointer-events: none; background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; box-shadow: 0 4px 14px rgba(0, 0, 0, .15); max-width: 320px; z-index: 5; font-size: 12px; }
   #tooltip b { font-weight: 600; }
   #tooltip .sub { color: var(--muted); }
@@ -275,7 +275,6 @@
   table.rho td.hot { color: var(--accent); font-weight: 600; }
   .rho-wrap { overflow-x: auto; }
   #tables:focus-visible { outline-offset: -2px; }
-  @media (max-width: 1100px) { #drawer { position: fixed; z-index: 30; } }              /* stacked layout: over the viewport, not the grid */
   @media (prefers-reduced-motion: reduce) { #drawer:not([hidden]) { animation: none; } } /* hover transitions are already off above */
 
   /* ---- diff page (WP5) ---- */
