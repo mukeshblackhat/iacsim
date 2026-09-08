@@ -91,3 +91,45 @@ def test_diff_html_renders():
     blob = json.loads(html.split('id="iacsim-data">', 1)[1].split("</script>", 1)[0])
     assert blob["kind"] == "diff" and blob["diff"]["graph"]["nodes_moved"]
     assert set(blob["diff"]["graphs"]) == {"before", "after"} and blob["diff"]["generated_at"]
+
+
+def test_findings_the_rail_and_tables_read(classic_web_bad_run, foosh_run, sampled_run):
+    """The contract the page's rail and tables rely on, held on real runs: the
+    additive per_category shares sum to 1.0 (one 100 % bar), per_node is ranked by
+    ms (top five = first five), the top bottleneck's display name and every
+    category subject are in the page, hop `percentiles` are `{}` unless the walker
+    sampled, and tail-risk findings exist only for a sampled run (the page draws
+    the "Tail risk" table only then) — with its scenario sentence first."""
+    def page(output):
+        html = HtmlReporter().render(output.findings, output.graph)
+        assert "█" not in html
+        return html, json.loads(html.split('id="iacsim-data">', 1)[1].split("</script>", 1)[0])["report"]
+
+    html, report = page(classic_web_bad_run)
+    findings = report["scenarios"][0]["findings"]
+    additive = [f for f in findings["per_category"] if f["additive"]]
+    assert additive and abs(sum(f["share"] for f in additive) - 1.0) < 1e-6
+    for f in findings["per_category"]:
+        assert f["subject"] in html
+    ranked = [f["latency_ms"] for f in findings["per_node"]]
+    assert ranked == sorted(ranked, reverse=True)
+    assert classic_web_bad_run.graph.display_name(findings["per_node"][0]["subject"]) in html
+    for rec in findings["recommendations"]:
+        assert ". Based on: " in rec["detail"]                      # the card's reason / "based on" split
+
+    _html, plain = page(foosh_run)
+    assert all(not h["percentiles"] for s in plain["scenarios"] for h in s["hops"])
+    assert not any("tail_risk" in s["findings"] for s in plain["scenarios"])
+    grouped = [s for s in plain["scenarios"] if any(h["group"] for h in s["hops"])]
+    assert grouped
+    assert all(re.fullmatch(r"parallel\d+/branch\d+", h["group"]) for s in grouped for h in s["hops"] if h["group"])
+    branches = [s for s in grouped if len({h["group"] for h in s["hops"] if h["group"]}) > 1]
+    assert branches and all("critical_path" in s["findings"] for s in branches)   # one branch → nothing to compare
+
+    _html, sampled = page(sampled_run)
+    for s in sampled["scenarios"]:
+        assert all({"p50", "p99"} <= set(h["percentiles"]) for h in s["hops"])
+        tail = s["findings"]["tail_risk"]
+        assert tail[0]["subject"] == "p99 − p50" and tail[0]["refs"] == []
+        assert all(" → " in t["subject"] and len(t["refs"]) == 1 for t in tail[1:])
+    assert dict(SECTION_TITLES)["tail_risk"] == "Tail risk (p99 − p50)"

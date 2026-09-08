@@ -275,10 +275,15 @@ def test_help(cmd):
 
 # ---------------------------------------------------------------- M8: --walker load
 
+def _html_blob(page: Path) -> dict:
+    """The data blob the dashboard reads, parsed back out of the page."""
+    return json.loads(page.read_text().split('id="iacsim-data">', 1)[1].split("</script>", 1)[0])
+
+
 def test_run_load_walker_writes_capacity(ex):
-    import json
     target = ex["foosh-serverless"]
-    r = invoke("run", target, "--walker", "load", "--profile", target / "calibrated.yaml", "-o", "json", "-o", "text")
+    r = invoke("run", target, "--walker", "load", "--profile", target / "calibrated.yaml",
+               "-o", "json", "-o", "text", "-o", "html")
     assert r.exit_code == 0, r.output
     assert "users until it breaks" in r.output and "first to break" in r.output
     doc = json.loads((target / ".iacsim" / "report.json").read_text())
@@ -286,6 +291,26 @@ def test_run_load_walker_writes_capacity(ex):
     assert doc["capacity"]["first_to_break"]["resource"] == max(util_max, key=util_max.get)
     assert doc["scenarios"][0]["load"]["users"] == [100, 500, 1000, 2000, 5000, 10000]
     assert "Infinity" not in json.dumps(doc)
+    # the html page carries the same sweep, and the capacity band's headings
+    page = target / ".iacsim" / "report.html"
+    html = page.read_text()
+    for title in ("users until it breaks", "Utilisation by users", "p99 by users", "What breaks first"):
+        assert title in html
+    cap = _html_blob(page)["report"]["capacity"]
+    assert cap["first_to_break"] == doc["capacity"]["first_to_break"]
+    assert cap["users"] == [100, 500, 1000, 2000, 5000, 10000] and cap["utilisation"]["10000"] == util_max
+
+
+def test_run_without_load_walker_has_no_capacity_data(ex):
+    """No `--walker load` → `capacity` is `{}` in the page's blob: the band has nothing
+    to draw and stays hidden. (The section titles are always inlined — they are the
+    reporter's contract with the Brief — so the test looks at the data, not the text.)"""
+    target = ex["foosh-serverless"]
+    r = invoke("run", target, "-o", "html")
+    assert r.exit_code == 0, r.output
+    blob = _html_blob(target / ".iacsim" / "report.html")
+    assert blob["report"]["capacity"] == {}
+    assert '"first_to_break"' not in json.dumps(blob["report"]) and '"utilisation"' not in json.dumps(blob["report"])
 
 
 def test_run_load_walker_without_load_file_is_a_clean_error(ex):
