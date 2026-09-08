@@ -109,13 +109,32 @@ def test_diff_scenario_filter_and_bad_threshold(ex):
     assert bad.exit_code != 0
 
 
+def test_run_html_writes_report_html(ex):
+    r = invoke("run", ex["classic-web"], "-o", "html")
+    assert r.exit_code == 0, r.output
+    page = ex["classic-web"] / ".iacsim" / "report.html"
+    assert page.is_file() and f"wrote {page}" in r.output
+    html = page.read_text()
+    assert html.startswith("<!doctype html>") and "<title>iacsim dashboard</title>" in html
+    assert '"kind":"report"' in html and "page_load" in html and "__IACSIM_DATA__" not in html
+
+
+def test_diff_html_writes_diff_html(ex):
+    r = invoke("diff", ex["classic-web"], ex["classic-web-bad"], "-o", "html")
+    assert r.exit_code == 0, r.output
+    page = ex["classic-web-bad"] / ".iacsim" / "diff.html"
+    assert page.is_file()
+    html = page.read_text()
+    assert '"kind":"diff"' in html and "nodes_moved" in html and "eu-west-1" in html
+
+
 def test_view_prepares_the_directory_and_serves_briefly(ex):
     r = invoke("view", ex["classic-web"], "--no-open", "--duration", "0.3")
     assert r.exit_code == 0, r.output
     out = ex["classic-web"] / ".iacsim"
     assert (out / "index.html").is_file() and (out / "report.json").is_file()
     assert re.search(r"viewer: http://127\.0\.0\.1:\d+/", r.output)
-    assert "<title>iacsim viewer</title>" in (out / "index.html").read_text()
+    assert "<title>iacsim dashboard</title>" in (out / "index.html").read_text()
 
 
 def test_view_runs_the_pipeline_when_report_is_missing(tmp_path):

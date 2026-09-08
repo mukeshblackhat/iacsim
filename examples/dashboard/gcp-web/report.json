@@ -1,0 +1,1955 @@
+{
+  "schema_version": "2",
+  "generated_at": "2026-09-08T07:39:19+00:00",
+  "profile": {
+    "sources": [
+      "defaults"
+    ]
+  },
+  "graph": {
+    "nodes": {
+      "google_compute_network.vpc": {
+        "id": "google_compute_network.vpc",
+        "kind": "network",
+        "subtype": "vpc",
+        "placement": {
+          "region": "us-central1",
+          "az": null,
+          "vpc": null,
+          "subnet": null
+        },
+        "attrs": {},
+        "label": "gcp-web"
+      },
+      "google_compute_subnetwork.app": {
+        "id": "google_compute_subnetwork.app",
+        "kind": "network",
+        "subtype": "subnet",
+        "placement": {
+          "region": "us-central1",
+          "az": null,
+          "vpc": "google_compute_network.vpc",
+          "subnet": null
+        },
+        "attrs": {
+          "region": "us-central1",
+          "network": "${google_compute_network.vpc.id}"
+        },
+        "label": "gcp-web-app"
+      },
+      "google_cloud_run_v2_service.web": {
+        "id": "google_cloud_run_v2_service.web",
+        "kind": "compute",
+        "subtype": "cloud_run",
+        "placement": {
+          "region": "us-central1",
+          "az": null,
+          "vpc": "google_compute_network.vpc",
+          "subnet": "google_compute_subnetwork.app"
+        },
+        "attrs": {
+          "location": "us-central1",
+          "ingress": "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER",
+          "max_instances": 10
+        },
+        "label": "gcp-web-web"
+      },
+      "google_sql_database_instance.db": {
+        "id": "google_sql_database_instance.db",
+        "kind": "datastore",
+        "subtype": "cloud_sql",
+        "placement": {
+          "region": "us-central1",
+          "az": null,
+          "vpc": "google_compute_network.vpc",
+          "subnet": null
+        },
+        "attrs": {
+          "region": "us-central1",
+          "database_version": "POSTGRES_16",
+          "tier": "db-custom-2-7680"
+        },
+        "label": "gcp-web-db"
+      },
+      "google_redis_instance.cache": {
+        "id": "google_redis_instance.cache",
+        "kind": "datastore",
+        "subtype": "memorystore",
+        "placement": {
+          "region": "us-central1",
+          "az": null,
+          "vpc": null,
+          "subnet": null
+        },
+        "attrs": {
+          "region": "us-central1",
+          "tier": "BASIC",
+          "memory_size_gb": 1
+        },
+        "label": "gcp-web-cache"
+      },
+      "google_compute_region_network_endpoint_group.web": {
+        "id": "google_compute_region_network_endpoint_group.web",
+        "kind": "lb",
+        "subtype": "neg",
+        "placement": {
+          "region": "us-central1",
+          "az": null,
+          "vpc": null,
+          "subnet": null
+        },
+        "attrs": {
+          "region": "us-central1"
+        },
+        "label": "gcp-web-neg"
+      },
+      "google_compute_backend_service.web": {
+        "id": "google_compute_backend_service.web",
+        "kind": "lb",
+        "subtype": "backend_service",
+        "placement": {
+          "region": "us-central1",
+          "az": null,
+          "vpc": null,
+          "subnet": null
+        },
+        "attrs": {
+          "load_balancing_scheme": "EXTERNAL_MANAGED",
+          "protocol": "HTTPS"
+        },
+        "label": "gcp-web-backend"
+      },
+      "google_compute_url_map.web": {
+        "id": "google_compute_url_map.web",
+        "kind": "lb",
+        "subtype": "url_map",
+        "placement": {
+          "region": "us-central1",
+          "az": null,
+          "vpc": null,
+          "subnet": null
+        },
+        "attrs": {},
+        "label": "gcp-web"
+      },
+      "google_compute_target_https_proxy.web": {
+        "id": "google_compute_target_https_proxy.web",
+        "kind": "lb",
+        "subtype": "target_proxy",
+        "placement": {
+          "region": "us-central1",
+          "az": null,
+          "vpc": null,
+          "subnet": null
+        },
+        "attrs": {},
+        "label": "gcp-web"
+      },
+      "google_compute_global_forwarding_rule.web": {
+        "id": "google_compute_global_forwarding_rule.web",
+        "kind": "lb",
+        "subtype": "forwarding_rule",
+        "placement": {
+          "region": "us-central1",
+          "az": null,
+          "vpc": null,
+          "subnet": null
+        },
+        "attrs": {
+          "load_balancing_scheme": "EXTERNAL_MANAGED",
+          "port_range": "443",
+          "ip_protocol": "TCP"
+        },
+        "label": "gcp-web-https"
+      },
+      "internet": {
+        "id": "internet",
+        "kind": "external",
+        "subtype": "internet",
+        "placement": {
+          "region": null,
+          "az": null,
+          "vpc": null,
+          "subnet": null
+        },
+        "attrs": {},
+        "label": "internet"
+      }
+    },
+    "edges": [
+      {
+        "src": "internet",
+        "dst": "google_compute_global_forwarding_rule.web",
+        "kind": "invoke",
+        "confidence": "high",
+        "evidence": "forwarding_rule gcp-web-https is a public entry point",
+        "rule": "normaliser",
+        "latency": {
+          "expected": 22.0,
+          "breakdown": {
+            "distance": 20.0,
+            "processing": 2.0
+          }
+        },
+        "ops": [
+          "invoke"
+        ]
+      },
+      {
+        "src": "google_compute_region_network_endpoint_group.web",
+        "dst": "google_cloud_run_v2_service.web",
+        "kind": "route",
+        "confidence": "high",
+        "evidence": "neg google_compute_region_network_endpoint_group.web cloud_run.service routes to cloud_run google_cloud_run_v2_service.web",
+        "rule": "gcp_lb_chain",
+        "latency": {
+          "expected": 105.5,
+          "breakdown": {
+            "distance": 0.5,
+            "processing": 5.0,
+            "cold_start": 100.0
+          }
+        },
+        "ops": [
+          "route"
+        ]
+      },
+      {
+        "src": "google_compute_backend_service.web",
+        "dst": "google_compute_region_network_endpoint_group.web",
+        "kind": "route",
+        "confidence": "high",
+        "evidence": "backend_service google_compute_backend_service.web backend.group routes to neg google_compute_region_network_endpoint_group.web",
+        "rule": "gcp_lb_chain",
+        "latency": {
+          "expected": 0.0,
+          "breakdown": {
+            "distance": 0.0,
+            "processing": 0.0
+          }
+        },
+        "ops": [
+          "route"
+        ]
+      },
+      {
+        "src": "google_compute_url_map.web",
+        "dst": "google_compute_backend_service.web",
+        "kind": "route",
+        "confidence": "high",
+        "evidence": "url_map google_compute_url_map.web default_service routes to backend_service google_compute_backend_service.web",
+        "rule": "gcp_lb_chain",
+        "latency": {
+          "expected": 0.0,
+          "breakdown": {
+            "distance": 0.0,
+            "processing": 0.0
+          }
+        },
+        "ops": [
+          "route"
+        ]
+      },
+      {
+        "src": "google_compute_target_https_proxy.web",
+        "dst": "google_compute_url_map.web",
+        "kind": "route",
+        "confidence": "high",
+        "evidence": "target_proxy google_compute_target_https_proxy.web url_map routes to url_map google_compute_url_map.web",
+        "rule": "gcp_lb_chain",
+        "latency": {
+          "expected": 0.0,
+          "breakdown": {
+            "distance": 0.0,
+            "processing": 0.0
+          }
+        },
+        "ops": [
+          "route"
+        ]
+      },
+      {
+        "src": "google_compute_global_forwarding_rule.web",
+        "dst": "google_compute_target_https_proxy.web",
+        "kind": "route",
+        "confidence": "high",
+        "evidence": "forwarding_rule google_compute_global_forwarding_rule.web target routes to target_proxy google_compute_target_https_proxy.web",
+        "rule": "gcp_lb_chain",
+        "latency": {
+          "expected": 0.0,
+          "breakdown": {
+            "distance": 0.0,
+            "processing": 0.0
+          }
+        },
+        "ops": [
+          "route"
+        ]
+      },
+      {
+        "src": "google_cloud_run_v2_service.web",
+        "dst": "google_sql_database_instance.db",
+        "kind": "read",
+        "confidence": "medium",
+        "evidence": "google_cloud_run_v2_service.web template.containers env DB_INSTANCE references google_sql_database_instance.db.connection_name; gcp_iam_binding: google_project_iam_member.web_cloudsql_client grants roles/cloudsql.client to ${google_service_account.web.email} (the service account of google_cloud_run_v2_service.web) on google_sql_database_instance.db",
+        "rule": "env_var+gcp_iam_binding",
+        "latency": {
+          "expected": 5.5,
+          "breakdown": {
+            "distance": 0.5,
+            "processing": 5.0
+          }
+        },
+        "ops": [
+          "read"
+        ]
+      },
+      {
+        "src": "google_cloud_run_v2_service.web",
+        "dst": "google_redis_instance.cache",
+        "kind": "read",
+        "confidence": "medium",
+        "evidence": "google_cloud_run_v2_service.web template.containers env REDIS_HOST references google_redis_instance.cache.host",
+        "rule": "env_var",
+        "latency": {
+          "expected": 1.0,
+          "breakdown": {
+            "distance": 0.5,
+            "processing": 0.5
+          }
+        },
+        "ops": [
+          "read"
+        ]
+      }
+    ],
+    "source_format": "terraform",
+    "warnings": [],
+    "schema_version": "2"
+  },
+  "scenarios": [
+    {
+      "name": "page_load",
+      "description": "GET /products \u2014 one page render, two sequential DB queries",
+      "source": "declared",
+      "total_ms": 160.0,
+      "percentiles": {},
+      "samples": null,
+      "shape": {
+        "sequential_hops": 8,
+        "parallel_groups": 0,
+        "fanout_copies": 0,
+        "fanout_waves": 0,
+        "wait_ms": 0.0,
+        "hop_count": 9,
+        "parallel_savings_ms": 0.0
+      },
+      "profile": {
+        "sources": [
+          "defaults"
+        ]
+      },
+      "hops": [
+        {
+          "src": "internet",
+          "dst": "google_compute_global_forwarding_rule.web",
+          "latency_ms": 42.0,
+          "breakdown": {
+            "distance": 40.0,
+            "processing": 2.0
+          },
+          "evidence": "forwarding_rule gcp-web-https is a public entry point",
+          "on_critical_path": true,
+          "group": null,
+          "percentiles": {},
+          "label": "internet \u2192 google_compute_global_forwarding_rule.web"
+        },
+        {
+          "src": "google_compute_global_forwarding_rule.web",
+          "dst": "google_compute_target_https_proxy.web",
+          "latency_ms": 0.0,
+          "breakdown": {
+            "distance": 0.0,
+            "processing": 0.0
+          },
+          "evidence": "forwarding_rule google_compute_global_forwarding_rule.web target routes to target_proxy google_compute_target_https_proxy.web",
+          "on_critical_path": true,
+          "group": null,
+          "percentiles": {},
+          "label": "google_compute_global_forwarding_rule.web \u2192 google_compute_target_https_proxy.web"
+        },
+        {
+          "src": "google_compute_target_https_proxy.web",
+          "dst": "google_compute_url_map.web",
+          "latency_ms": 0.0,
+          "breakdown": {
+            "distance": 0.0,
+            "processing": 0.0
+          },
+          "evidence": "target_proxy google_compute_target_https_proxy.web url_map routes to url_map google_compute_url_map.web",
+          "on_critical_path": true,
+          "group": null,
+          "percentiles": {},
+          "label": "google_compute_target_https_proxy.web \u2192 google_compute_url_map.web"
+        },
+        {
+          "src": "google_compute_url_map.web",
+          "dst": "google_compute_backend_service.web",
+          "latency_ms": 0.0,
+          "breakdown": {
+            "distance": 0.0,
+            "processing": 0.0
+          },
+          "evidence": "url_map google_compute_url_map.web default_service routes to backend_service google_compute_backend_service.web",
+          "on_critical_path": true,
+          "group": null,
+          "percentiles": {},
+          "label": "google_compute_url_map.web \u2192 google_compute_backend_service.web"
+        },
+        {
+          "src": "google_compute_backend_service.web",
+          "dst": "google_compute_region_network_endpoint_group.web",
+          "latency_ms": 0.0,
+          "breakdown": {
+            "distance": 0.0,
+            "processing": 0.0
+          },
+          "evidence": "backend_service google_compute_backend_service.web backend.group routes to neg google_compute_region_network_endpoint_group.web",
+          "on_critical_path": true,
+          "group": null,
+          "percentiles": {},
+          "label": "google_compute_backend_service.web \u2192 google_compute_region_network_endpoint_group.web"
+        },
+        {
+          "src": "google_compute_region_network_endpoint_group.web",
+          "dst": "google_cloud_run_v2_service.web",
+          "latency_ms": 106.0,
+          "breakdown": {
+            "distance": 1.0,
+            "processing": 5.0,
+            "cold_start": 100.0
+          },
+          "evidence": "neg google_compute_region_network_endpoint_group.web cloud_run.service routes to cloud_run google_cloud_run_v2_service.web",
+          "on_critical_path": true,
+          "group": null,
+          "percentiles": {},
+          "label": "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web"
+        },
+        {
+          "src": "google_cloud_run_v2_service.web",
+          "dst": "google_sql_database_instance.db",
+          "latency_ms": 6.0,
+          "breakdown": {
+            "distance": 1.0,
+            "processing": 5.0
+          },
+          "evidence": "google_cloud_run_v2_service.web template.containers env DB_INSTANCE references google_sql_database_instance.db.connection_name; gcp_iam_binding: google_project_iam_member.web_cloudsql_client grants roles/cloudsql.client to ${google_service_account.web.email} (the service account of google_cloud_run_v2_service.web) on google_sql_database_instance.db",
+          "on_critical_path": true,
+          "group": null,
+          "percentiles": {},
+          "label": "google_cloud_run_v2_service.web \u2192 google_sql_database_instance.db"
+        },
+        {
+          "src": "google_cloud_run_v2_service.web",
+          "dst": "google_sql_database_instance.db",
+          "latency_ms": 6.0,
+          "breakdown": {
+            "distance": 1.0,
+            "processing": 5.0
+          },
+          "evidence": "google_cloud_run_v2_service.web template.containers env DB_INSTANCE references google_sql_database_instance.db.connection_name; gcp_iam_binding: google_project_iam_member.web_cloudsql_client grants roles/cloudsql.client to ${google_service_account.web.email} (the service account of google_cloud_run_v2_service.web) on google_sql_database_instance.db; repeat call",
+          "on_critical_path": true,
+          "group": null,
+          "percentiles": {},
+          "label": "google_cloud_run_v2_service.web \u2192 google_sql_database_instance.db"
+        },
+        {
+          "src": "google_sql_database_instance.db",
+          "dst": "google_cloud_run_v2_service.web",
+          "latency_ms": 0,
+          "breakdown": {},
+          "evidence": "response leg \u2014 network and processing already counted on the forward hop into gcp-web-web; respond=0 (processing.cloud_run.respond)",
+          "on_critical_path": true,
+          "group": null,
+          "percentiles": {},
+          "label": "google_sql_database_instance.db \u2192 google_cloud_run_v2_service.web"
+        }
+      ],
+      "findings": {
+        "per_hop": [
+          {
+            "analyzer": "per_hop",
+            "subject": "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web",
+            "latency_ms": 106.0,
+            "share": 0.6625,
+            "detail": "neg google_compute_region_network_endpoint_group.web cloud_run.service routes to cloud_run google_cloud_run_v2_service.web",
+            "refs": [
+              "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web"
+            ],
+            "layer": null,
+            "additive": true
+          },
+          {
+            "analyzer": "per_hop",
+            "subject": "internet \u2192 google_compute_global_forwarding_rule.web",
+            "latency_ms": 42.0,
+            "share": 0.2625,
+            "detail": "forwarding_rule gcp-web-https is a public entry point",
+            "refs": [
+              "internet \u2192 google_compute_global_forwarding_rule.web"
+            ],
+            "layer": null,
+            "additive": true
+          },
+          {
+            "analyzer": "per_hop",
+            "subject": "google_cloud_run_v2_service.web \u2192 google_sql_database_instance.db",
+            "latency_ms": 6.0,
+            "share": 0.0375,
+            "detail": "google_cloud_run_v2_service.web template.containers env DB_INSTANCE references google_sql_database_instance.db.connection_name; gcp_iam_binding: google_project_iam_member.web_cloudsql_client grants roles/cloudsql.client to ${google_service_account.web.email} (the service account of google_cloud_run_v2_service.web) on google_sql_database_instance.db",
+            "refs": [
+              "google_cloud_run_v2_service.web \u2192 google_sql_database_instance.db"
+            ],
+            "layer": null,
+            "additive": true
+          },
+          {
+            "analyzer": "per_hop",
+            "subject": "google_cloud_run_v2_service.web \u2192 google_sql_database_instance.db",
+            "latency_ms": 6.0,
+            "share": 0.0375,
+            "detail": "google_cloud_run_v2_service.web template.containers env DB_INSTANCE references google_sql_database_instance.db.connection_name; gcp_iam_binding: google_project_iam_member.web_cloudsql_client grants roles/cloudsql.client to ${google_service_account.web.email} (the service account of google_cloud_run_v2_service.web) on google_sql_database_instance.db; repeat call",
+            "refs": [
+              "google_cloud_run_v2_service.web \u2192 google_sql_database_instance.db"
+            ],
+            "layer": null,
+            "additive": true
+          },
+          {
+            "analyzer": "per_hop",
+            "subject": "google_compute_global_forwarding_rule.web \u2192 google_compute_target_https_proxy.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "forwarding_rule google_compute_global_forwarding_rule.web target routes to target_proxy google_compute_target_https_proxy.web",
+            "refs": [
+              "google_compute_global_forwarding_rule.web \u2192 google_compute_target_https_proxy.web"
+            ],
+            "layer": null,
+            "additive": true
+          },
+          {
+            "analyzer": "per_hop",
+            "subject": "google_compute_target_https_proxy.web \u2192 google_compute_url_map.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "target_proxy google_compute_target_https_proxy.web url_map routes to url_map google_compute_url_map.web",
+            "refs": [
+              "google_compute_target_https_proxy.web \u2192 google_compute_url_map.web"
+            ],
+            "layer": null,
+            "additive": true
+          },
+          {
+            "analyzer": "per_hop",
+            "subject": "google_compute_url_map.web \u2192 google_compute_backend_service.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "url_map google_compute_url_map.web default_service routes to backend_service google_compute_backend_service.web",
+            "refs": [
+              "google_compute_url_map.web \u2192 google_compute_backend_service.web"
+            ],
+            "layer": null,
+            "additive": true
+          },
+          {
+            "analyzer": "per_hop",
+            "subject": "google_compute_backend_service.web \u2192 google_compute_region_network_endpoint_group.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "backend_service google_compute_backend_service.web backend.group routes to neg google_compute_region_network_endpoint_group.web",
+            "refs": [
+              "google_compute_backend_service.web \u2192 google_compute_region_network_endpoint_group.web"
+            ],
+            "layer": null,
+            "additive": true
+          },
+          {
+            "analyzer": "per_hop",
+            "subject": "google_sql_database_instance.db \u2192 google_cloud_run_v2_service.web",
+            "latency_ms": 0,
+            "share": 0.0,
+            "detail": "response leg \u2014 network and processing already counted on the forward hop into gcp-web-web; respond=0 (processing.cloud_run.respond)",
+            "refs": [
+              "google_sql_database_instance.db \u2192 google_cloud_run_v2_service.web"
+            ],
+            "layer": null,
+            "additive": true
+          }
+        ],
+        "per_node": [
+          {
+            "analyzer": "per_node",
+            "subject": "google_cloud_run_v2_service.web",
+            "latency_ms": 106.0,
+            "share": 0.6625,
+            "detail": "2 call(s) into cloud_run \u2014 dominated by cold_start (service, 100 ms)",
+            "refs": [
+              "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web",
+              "google_sql_database_instance.db \u2192 google_cloud_run_v2_service.web"
+            ],
+            "layer": "A2",
+            "additive": true
+          },
+          {
+            "analyzer": "per_node",
+            "subject": "google_compute_global_forwarding_rule.web",
+            "latency_ms": 42.0,
+            "share": 0.2625,
+            "detail": "1 call(s) into forwarding_rule \u2014 dominated by distance (distance, 40 ms)",
+            "refs": [
+              "internet \u2192 google_compute_global_forwarding_rule.web"
+            ],
+            "layer": "A1",
+            "additive": true
+          },
+          {
+            "analyzer": "per_node",
+            "subject": "google_sql_database_instance.db",
+            "latency_ms": 12.0,
+            "share": 0.075,
+            "detail": "2 call(s) into cloud_sql \u2014 dominated by processing (service, 10 ms)",
+            "refs": [
+              "google_cloud_run_v2_service.web \u2192 google_sql_database_instance.db",
+              "google_cloud_run_v2_service.web \u2192 google_sql_database_instance.db"
+            ],
+            "layer": "A2",
+            "additive": true
+          },
+          {
+            "analyzer": "per_node",
+            "subject": "google_compute_target_https_proxy.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "1 call(s) into target_proxy \u2014 dominated by distance (distance, 0 ms)",
+            "refs": [
+              "google_compute_global_forwarding_rule.web \u2192 google_compute_target_https_proxy.web"
+            ],
+            "layer": "A1",
+            "additive": true
+          },
+          {
+            "analyzer": "per_node",
+            "subject": "google_compute_url_map.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "1 call(s) into url_map \u2014 dominated by distance (distance, 0 ms)",
+            "refs": [
+              "google_compute_target_https_proxy.web \u2192 google_compute_url_map.web"
+            ],
+            "layer": "A1",
+            "additive": true
+          },
+          {
+            "analyzer": "per_node",
+            "subject": "google_compute_backend_service.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "1 call(s) into backend_service \u2014 dominated by distance (distance, 0 ms)",
+            "refs": [
+              "google_compute_url_map.web \u2192 google_compute_backend_service.web"
+            ],
+            "layer": "A1",
+            "additive": true
+          },
+          {
+            "analyzer": "per_node",
+            "subject": "google_compute_region_network_endpoint_group.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "1 call(s) into neg \u2014 dominated by distance (distance, 0 ms)",
+            "refs": [
+              "google_compute_backend_service.web \u2192 google_compute_region_network_endpoint_group.web"
+            ],
+            "layer": "A1",
+            "additive": true
+          }
+        ],
+        "per_category": [
+          {
+            "analyzer": "per_category",
+            "subject": "cold_start",
+            "latency_ms": 100.0,
+            "share": 0.625,
+            "detail": "expected cold-start cost across 1 Cloud Run invocation(s) (gcp-web-web)",
+            "refs": [
+              "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web"
+            ],
+            "layer": "A2",
+            "additive": true
+          },
+          {
+            "analyzer": "per_category",
+            "subject": "distance",
+            "latency_ms": 43.0,
+            "share": 0.26875,
+            "detail": "1 internet \u2192 edge hop (fixed cost of being reachable); 7 same-region hop(s) (AZ spans)",
+            "refs": [
+              "internet \u2192 google_compute_global_forwarding_rule.web",
+              "google_compute_global_forwarding_rule.web \u2192 google_compute_target_https_proxy.web",
+              "google_compute_target_https_proxy.web \u2192 google_compute_url_map.web",
+              "google_compute_url_map.web \u2192 google_compute_backend_service.web",
+              "google_compute_backend_service.web \u2192 google_compute_region_network_endpoint_group.web",
+              "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web",
+              "google_cloud_run_v2_service.web \u2192 google_sql_database_instance.db",
+              "google_cloud_run_v2_service.web \u2192 google_sql_database_instance.db"
+            ],
+            "layer": "A1",
+            "additive": true
+          },
+          {
+            "analyzer": "per_category",
+            "subject": "processing",
+            "latency_ms": 17.0,
+            "share": 0.10625,
+            "detail": "time inside services: cloud_sql 10 ms, cloud_run 5 ms, forwarding_rule 2 ms",
+            "refs": [
+              "internet \u2192 google_compute_global_forwarding_rule.web",
+              "google_compute_global_forwarding_rule.web \u2192 google_compute_target_https_proxy.web",
+              "google_compute_target_https_proxy.web \u2192 google_compute_url_map.web",
+              "google_compute_url_map.web \u2192 google_compute_backend_service.web",
+              "google_compute_backend_service.web \u2192 google_compute_region_network_endpoint_group.web",
+              "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web",
+              "google_cloud_run_v2_service.web \u2192 google_sql_database_instance.db",
+              "google_cloud_run_v2_service.web \u2192 google_sql_database_instance.db"
+            ],
+            "layer": "A2",
+            "additive": true
+          },
+          {
+            "analyzer": "per_category",
+            "subject": "service",
+            "latency_ms": 117.0,
+            "share": 0.73125,
+            "detail": "processing + cold_start + transition (roll-up of the A2 lines above)",
+            "refs": [],
+            "layer": "A2",
+            "additive": false
+          },
+          {
+            "analyzer": "per_category",
+            "subject": "hops",
+            "latency_ms": 9.0,
+            "share": 0.0,
+            "detail": "8 sequential hop(s); each is a round-trip that adds distance and processing",
+            "refs": [],
+            "layer": "A3",
+            "additive": false
+          }
+        ],
+        "recommendations": [
+          {
+            "analyzer": "recommendations",
+            "subject": "a minimum instance count on gcp-web-web",
+            "latency_ms": 100.0,
+            "share": 0.625,
+            "detail": "expected cold-start cost is 62% of the total across 1 Cloud Run invocation(s); a minimum instance count (min_instances) keeps a warm instance and removes it. Based on: gcp-web-neg \u2192 gcp-web-web (106 ms)",
+            "refs": [
+              "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web"
+            ],
+            "layer": null,
+            "additive": true
+          },
+          {
+            "analyzer": "recommendations",
+            "subject": "batch the 2 calls from gcp-web-web to gcp-web-db",
+            "latency_ms": 6.0,
+            "share": 0.0375,
+            "detail": "2 consecutive round-trips to the same cloud_sql at ~6 ms each; one batched query (BatchGetItem / a JOIN / a single transaction) pays the trip once. Based on: gcp-web-web \u2192 gcp-web-db (6 ms); gcp-web-web \u2192 gcp-web-db (6 ms)",
+            "refs": [
+              "google_cloud_run_v2_service.web \u2192 google_sql_database_instance.db",
+              "google_cloud_run_v2_service.web \u2192 google_sql_database_instance.db"
+            ],
+            "layer": null,
+            "additive": true
+          }
+        ]
+      },
+      "warnings": [],
+      "load": {}
+    },
+    {
+      "name": "cached_page",
+      "description": "GET /products with a warm cache \u2014 one Redis read, no database",
+      "source": "declared",
+      "total_ms": 149.5,
+      "percentiles": {},
+      "samples": null,
+      "shape": {
+        "sequential_hops": 7,
+        "parallel_groups": 0,
+        "fanout_copies": 0,
+        "fanout_waves": 0,
+        "wait_ms": 0.0,
+        "hop_count": 8,
+        "parallel_savings_ms": 0.0
+      },
+      "profile": {
+        "sources": [
+          "defaults"
+        ]
+      },
+      "hops": [
+        {
+          "src": "internet",
+          "dst": "google_compute_global_forwarding_rule.web",
+          "latency_ms": 42.0,
+          "breakdown": {
+            "distance": 40.0,
+            "processing": 2.0
+          },
+          "evidence": "forwarding_rule gcp-web-https is a public entry point",
+          "on_critical_path": true,
+          "group": null,
+          "percentiles": {},
+          "label": "internet \u2192 google_compute_global_forwarding_rule.web"
+        },
+        {
+          "src": "google_compute_global_forwarding_rule.web",
+          "dst": "google_compute_target_https_proxy.web",
+          "latency_ms": 0.0,
+          "breakdown": {
+            "distance": 0.0,
+            "processing": 0.0
+          },
+          "evidence": "forwarding_rule google_compute_global_forwarding_rule.web target routes to target_proxy google_compute_target_https_proxy.web",
+          "on_critical_path": true,
+          "group": null,
+          "percentiles": {},
+          "label": "google_compute_global_forwarding_rule.web \u2192 google_compute_target_https_proxy.web"
+        },
+        {
+          "src": "google_compute_target_https_proxy.web",
+          "dst": "google_compute_url_map.web",
+          "latency_ms": 0.0,
+          "breakdown": {
+            "distance": 0.0,
+            "processing": 0.0
+          },
+          "evidence": "target_proxy google_compute_target_https_proxy.web url_map routes to url_map google_compute_url_map.web",
+          "on_critical_path": true,
+          "group": null,
+          "percentiles": {},
+          "label": "google_compute_target_https_proxy.web \u2192 google_compute_url_map.web"
+        },
+        {
+          "src": "google_compute_url_map.web",
+          "dst": "google_compute_backend_service.web",
+          "latency_ms": 0.0,
+          "breakdown": {
+            "distance": 0.0,
+            "processing": 0.0
+          },
+          "evidence": "url_map google_compute_url_map.web default_service routes to backend_service google_compute_backend_service.web",
+          "on_critical_path": true,
+          "group": null,
+          "percentiles": {},
+          "label": "google_compute_url_map.web \u2192 google_compute_backend_service.web"
+        },
+        {
+          "src": "google_compute_backend_service.web",
+          "dst": "google_compute_region_network_endpoint_group.web",
+          "latency_ms": 0.0,
+          "breakdown": {
+            "distance": 0.0,
+            "processing": 0.0
+          },
+          "evidence": "backend_service google_compute_backend_service.web backend.group routes to neg google_compute_region_network_endpoint_group.web",
+          "on_critical_path": true,
+          "group": null,
+          "percentiles": {},
+          "label": "google_compute_backend_service.web \u2192 google_compute_region_network_endpoint_group.web"
+        },
+        {
+          "src": "google_compute_region_network_endpoint_group.web",
+          "dst": "google_cloud_run_v2_service.web",
+          "latency_ms": 106.0,
+          "breakdown": {
+            "distance": 1.0,
+            "processing": 5.0,
+            "cold_start": 100.0
+          },
+          "evidence": "neg google_compute_region_network_endpoint_group.web cloud_run.service routes to cloud_run google_cloud_run_v2_service.web",
+          "on_critical_path": true,
+          "group": null,
+          "percentiles": {},
+          "label": "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web"
+        },
+        {
+          "src": "google_cloud_run_v2_service.web",
+          "dst": "google_redis_instance.cache",
+          "latency_ms": 1.5,
+          "breakdown": {
+            "distance": 1.0,
+            "processing": 0.5
+          },
+          "evidence": "google_cloud_run_v2_service.web template.containers env REDIS_HOST references google_redis_instance.cache.host",
+          "on_critical_path": true,
+          "group": null,
+          "percentiles": {},
+          "label": "google_cloud_run_v2_service.web \u2192 google_redis_instance.cache"
+        },
+        {
+          "src": "google_redis_instance.cache",
+          "dst": "google_cloud_run_v2_service.web",
+          "latency_ms": 0,
+          "breakdown": {},
+          "evidence": "response leg \u2014 network and processing already counted on the forward hop into gcp-web-web; respond=0 (processing.cloud_run.respond)",
+          "on_critical_path": true,
+          "group": null,
+          "percentiles": {},
+          "label": "google_redis_instance.cache \u2192 google_cloud_run_v2_service.web"
+        }
+      ],
+      "findings": {
+        "per_hop": [
+          {
+            "analyzer": "per_hop",
+            "subject": "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web",
+            "latency_ms": 106.0,
+            "share": 0.7090301003344481,
+            "detail": "neg google_compute_region_network_endpoint_group.web cloud_run.service routes to cloud_run google_cloud_run_v2_service.web",
+            "refs": [
+              "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web"
+            ],
+            "layer": null,
+            "additive": true
+          },
+          {
+            "analyzer": "per_hop",
+            "subject": "internet \u2192 google_compute_global_forwarding_rule.web",
+            "latency_ms": 42.0,
+            "share": 0.2809364548494983,
+            "detail": "forwarding_rule gcp-web-https is a public entry point",
+            "refs": [
+              "internet \u2192 google_compute_global_forwarding_rule.web"
+            ],
+            "layer": null,
+            "additive": true
+          },
+          {
+            "analyzer": "per_hop",
+            "subject": "google_cloud_run_v2_service.web \u2192 google_redis_instance.cache",
+            "latency_ms": 1.5,
+            "share": 0.010033444816053512,
+            "detail": "google_cloud_run_v2_service.web template.containers env REDIS_HOST references google_redis_instance.cache.host",
+            "refs": [
+              "google_cloud_run_v2_service.web \u2192 google_redis_instance.cache"
+            ],
+            "layer": null,
+            "additive": true
+          },
+          {
+            "analyzer": "per_hop",
+            "subject": "google_compute_global_forwarding_rule.web \u2192 google_compute_target_https_proxy.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "forwarding_rule google_compute_global_forwarding_rule.web target routes to target_proxy google_compute_target_https_proxy.web",
+            "refs": [
+              "google_compute_global_forwarding_rule.web \u2192 google_compute_target_https_proxy.web"
+            ],
+            "layer": null,
+            "additive": true
+          },
+          {
+            "analyzer": "per_hop",
+            "subject": "google_compute_target_https_proxy.web \u2192 google_compute_url_map.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "target_proxy google_compute_target_https_proxy.web url_map routes to url_map google_compute_url_map.web",
+            "refs": [
+              "google_compute_target_https_proxy.web \u2192 google_compute_url_map.web"
+            ],
+            "layer": null,
+            "additive": true
+          },
+          {
+            "analyzer": "per_hop",
+            "subject": "google_compute_url_map.web \u2192 google_compute_backend_service.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "url_map google_compute_url_map.web default_service routes to backend_service google_compute_backend_service.web",
+            "refs": [
+              "google_compute_url_map.web \u2192 google_compute_backend_service.web"
+            ],
+            "layer": null,
+            "additive": true
+          },
+          {
+            "analyzer": "per_hop",
+            "subject": "google_compute_backend_service.web \u2192 google_compute_region_network_endpoint_group.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "backend_service google_compute_backend_service.web backend.group routes to neg google_compute_region_network_endpoint_group.web",
+            "refs": [
+              "google_compute_backend_service.web \u2192 google_compute_region_network_endpoint_group.web"
+            ],
+            "layer": null,
+            "additive": true
+          },
+          {
+            "analyzer": "per_hop",
+            "subject": "google_redis_instance.cache \u2192 google_cloud_run_v2_service.web",
+            "latency_ms": 0,
+            "share": 0.0,
+            "detail": "response leg \u2014 network and processing already counted on the forward hop into gcp-web-web; respond=0 (processing.cloud_run.respond)",
+            "refs": [
+              "google_redis_instance.cache \u2192 google_cloud_run_v2_service.web"
+            ],
+            "layer": null,
+            "additive": true
+          }
+        ],
+        "per_node": [
+          {
+            "analyzer": "per_node",
+            "subject": "google_cloud_run_v2_service.web",
+            "latency_ms": 106.0,
+            "share": 0.7090301003344481,
+            "detail": "2 call(s) into cloud_run \u2014 dominated by cold_start (service, 100 ms)",
+            "refs": [
+              "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web",
+              "google_redis_instance.cache \u2192 google_cloud_run_v2_service.web"
+            ],
+            "layer": "A2",
+            "additive": true
+          },
+          {
+            "analyzer": "per_node",
+            "subject": "google_compute_global_forwarding_rule.web",
+            "latency_ms": 42.0,
+            "share": 0.2809364548494983,
+            "detail": "1 call(s) into forwarding_rule \u2014 dominated by distance (distance, 40 ms)",
+            "refs": [
+              "internet \u2192 google_compute_global_forwarding_rule.web"
+            ],
+            "layer": "A1",
+            "additive": true
+          },
+          {
+            "analyzer": "per_node",
+            "subject": "google_redis_instance.cache",
+            "latency_ms": 1.5,
+            "share": 0.010033444816053512,
+            "detail": "1 call(s) into memorystore \u2014 dominated by distance (distance, 1 ms)",
+            "refs": [
+              "google_cloud_run_v2_service.web \u2192 google_redis_instance.cache"
+            ],
+            "layer": "A1",
+            "additive": true
+          },
+          {
+            "analyzer": "per_node",
+            "subject": "google_compute_target_https_proxy.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "1 call(s) into target_proxy \u2014 dominated by distance (distance, 0 ms)",
+            "refs": [
+              "google_compute_global_forwarding_rule.web \u2192 google_compute_target_https_proxy.web"
+            ],
+            "layer": "A1",
+            "additive": true
+          },
+          {
+            "analyzer": "per_node",
+            "subject": "google_compute_url_map.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "1 call(s) into url_map \u2014 dominated by distance (distance, 0 ms)",
+            "refs": [
+              "google_compute_target_https_proxy.web \u2192 google_compute_url_map.web"
+            ],
+            "layer": "A1",
+            "additive": true
+          },
+          {
+            "analyzer": "per_node",
+            "subject": "google_compute_backend_service.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "1 call(s) into backend_service \u2014 dominated by distance (distance, 0 ms)",
+            "refs": [
+              "google_compute_url_map.web \u2192 google_compute_backend_service.web"
+            ],
+            "layer": "A1",
+            "additive": true
+          },
+          {
+            "analyzer": "per_node",
+            "subject": "google_compute_region_network_endpoint_group.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "1 call(s) into neg \u2014 dominated by distance (distance, 0 ms)",
+            "refs": [
+              "google_compute_backend_service.web \u2192 google_compute_region_network_endpoint_group.web"
+            ],
+            "layer": "A1",
+            "additive": true
+          }
+        ],
+        "per_category": [
+          {
+            "analyzer": "per_category",
+            "subject": "cold_start",
+            "latency_ms": 100.0,
+            "share": 0.6688963210702341,
+            "detail": "expected cold-start cost across 1 Cloud Run invocation(s) (gcp-web-web)",
+            "refs": [
+              "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web"
+            ],
+            "layer": "A2",
+            "additive": true
+          },
+          {
+            "analyzer": "per_category",
+            "subject": "distance",
+            "latency_ms": 42.0,
+            "share": 0.2809364548494983,
+            "detail": "1 internet \u2192 edge hop (fixed cost of being reachable); 6 same-region hop(s) (AZ spans)",
+            "refs": [
+              "internet \u2192 google_compute_global_forwarding_rule.web",
+              "google_compute_global_forwarding_rule.web \u2192 google_compute_target_https_proxy.web",
+              "google_compute_target_https_proxy.web \u2192 google_compute_url_map.web",
+              "google_compute_url_map.web \u2192 google_compute_backend_service.web",
+              "google_compute_backend_service.web \u2192 google_compute_region_network_endpoint_group.web",
+              "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web",
+              "google_cloud_run_v2_service.web \u2192 google_redis_instance.cache"
+            ],
+            "layer": "A1",
+            "additive": true
+          },
+          {
+            "analyzer": "per_category",
+            "subject": "processing",
+            "latency_ms": 7.5,
+            "share": 0.05016722408026756,
+            "detail": "time inside services: cloud_run 5 ms, forwarding_rule 2 ms, memorystore 0 ms",
+            "refs": [
+              "internet \u2192 google_compute_global_forwarding_rule.web",
+              "google_compute_global_forwarding_rule.web \u2192 google_compute_target_https_proxy.web",
+              "google_compute_target_https_proxy.web \u2192 google_compute_url_map.web",
+              "google_compute_url_map.web \u2192 google_compute_backend_service.web",
+              "google_compute_backend_service.web \u2192 google_compute_region_network_endpoint_group.web",
+              "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web",
+              "google_cloud_run_v2_service.web \u2192 google_redis_instance.cache"
+            ],
+            "layer": "A2",
+            "additive": true
+          },
+          {
+            "analyzer": "per_category",
+            "subject": "service",
+            "latency_ms": 107.5,
+            "share": 0.7190635451505016,
+            "detail": "processing + cold_start + transition (roll-up of the A2 lines above)",
+            "refs": [],
+            "layer": "A2",
+            "additive": false
+          },
+          {
+            "analyzer": "per_category",
+            "subject": "hops",
+            "latency_ms": 8.0,
+            "share": 0.0,
+            "detail": "7 sequential hop(s); each is a round-trip that adds distance and processing",
+            "refs": [],
+            "layer": "A3",
+            "additive": false
+          }
+        ],
+        "recommendations": [
+          {
+            "analyzer": "recommendations",
+            "subject": "a minimum instance count on gcp-web-web",
+            "latency_ms": 100.0,
+            "share": 0.6688963210702341,
+            "detail": "expected cold-start cost is 67% of the total across 1 Cloud Run invocation(s); a minimum instance count (min_instances) keeps a warm instance and removes it. Based on: gcp-web-neg \u2192 gcp-web-web (106 ms)",
+            "refs": [
+              "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web"
+            ],
+            "layer": null,
+            "additive": true
+          }
+        ]
+      },
+      "warnings": [],
+      "load": {}
+    },
+    {
+      "name": "gcp-web-https/gcp-web-db",
+      "description": "inferred: gcp-web-https \u2192 google_compute_target_https_proxy.web \u2192 google_compute_url_map.web \u2192 gcp-web-backend \u2192 gcp-web-neg \u2192 gcp-web-web \u2192 gcp-web-db",
+      "source": "inferred",
+      "total_ms": 154.0,
+      "percentiles": {},
+      "samples": null,
+      "shape": {
+        "sequential_hops": 6,
+        "parallel_groups": 0,
+        "fanout_copies": 0,
+        "fanout_waves": 0,
+        "wait_ms": 0.0,
+        "hop_count": 7,
+        "parallel_savings_ms": 0.0
+      },
+      "profile": {
+        "sources": [
+          "defaults"
+        ]
+      },
+      "hops": [
+        {
+          "src": "internet",
+          "dst": "google_compute_global_forwarding_rule.web",
+          "latency_ms": 42.0,
+          "breakdown": {
+            "distance": 40.0,
+            "processing": 2.0
+          },
+          "evidence": "forwarding_rule gcp-web-https is a public entry point",
+          "on_critical_path": true,
+          "group": null,
+          "percentiles": {},
+          "label": "internet \u2192 google_compute_global_forwarding_rule.web"
+        },
+        {
+          "src": "google_compute_global_forwarding_rule.web",
+          "dst": "google_compute_target_https_proxy.web",
+          "latency_ms": 0.0,
+          "breakdown": {
+            "distance": 0.0,
+            "processing": 0.0
+          },
+          "evidence": "forwarding_rule google_compute_global_forwarding_rule.web target routes to target_proxy google_compute_target_https_proxy.web",
+          "on_critical_path": true,
+          "group": null,
+          "percentiles": {},
+          "label": "google_compute_global_forwarding_rule.web \u2192 google_compute_target_https_proxy.web"
+        },
+        {
+          "src": "google_compute_target_https_proxy.web",
+          "dst": "google_compute_url_map.web",
+          "latency_ms": 0.0,
+          "breakdown": {
+            "distance": 0.0,
+            "processing": 0.0
+          },
+          "evidence": "target_proxy google_compute_target_https_proxy.web url_map routes to url_map google_compute_url_map.web",
+          "on_critical_path": true,
+          "group": null,
+          "percentiles": {},
+          "label": "google_compute_target_https_proxy.web \u2192 google_compute_url_map.web"
+        },
+        {
+          "src": "google_compute_url_map.web",
+          "dst": "google_compute_backend_service.web",
+          "latency_ms": 0.0,
+          "breakdown": {
+            "distance": 0.0,
+            "processing": 0.0
+          },
+          "evidence": "url_map google_compute_url_map.web default_service routes to backend_service google_compute_backend_service.web",
+          "on_critical_path": true,
+          "group": null,
+          "percentiles": {},
+          "label": "google_compute_url_map.web \u2192 google_compute_backend_service.web"
+        },
+        {
+          "src": "google_compute_backend_service.web",
+          "dst": "google_compute_region_network_endpoint_group.web",
+          "latency_ms": 0.0,
+          "breakdown": {
+            "distance": 0.0,
+            "processing": 0.0
+          },
+          "evidence": "backend_service google_compute_backend_service.web backend.group routes to neg google_compute_region_network_endpoint_group.web",
+          "on_critical_path": true,
+          "group": null,
+          "percentiles": {},
+          "label": "google_compute_backend_service.web \u2192 google_compute_region_network_endpoint_group.web"
+        },
+        {
+          "src": "google_compute_region_network_endpoint_group.web",
+          "dst": "google_cloud_run_v2_service.web",
+          "latency_ms": 106.0,
+          "breakdown": {
+            "distance": 1.0,
+            "processing": 5.0,
+            "cold_start": 100.0
+          },
+          "evidence": "neg google_compute_region_network_endpoint_group.web cloud_run.service routes to cloud_run google_cloud_run_v2_service.web",
+          "on_critical_path": true,
+          "group": null,
+          "percentiles": {},
+          "label": "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web"
+        },
+        {
+          "src": "google_cloud_run_v2_service.web",
+          "dst": "google_sql_database_instance.db",
+          "latency_ms": 6.0,
+          "breakdown": {
+            "distance": 1.0,
+            "processing": 5.0
+          },
+          "evidence": "google_cloud_run_v2_service.web template.containers env DB_INSTANCE references google_sql_database_instance.db.connection_name; gcp_iam_binding: google_project_iam_member.web_cloudsql_client grants roles/cloudsql.client to ${google_service_account.web.email} (the service account of google_cloud_run_v2_service.web) on google_sql_database_instance.db",
+          "on_critical_path": true,
+          "group": null,
+          "percentiles": {},
+          "label": "google_cloud_run_v2_service.web \u2192 google_sql_database_instance.db"
+        }
+      ],
+      "findings": {
+        "per_hop": [
+          {
+            "analyzer": "per_hop",
+            "subject": "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web",
+            "latency_ms": 106.0,
+            "share": 0.6883116883116883,
+            "detail": "neg google_compute_region_network_endpoint_group.web cloud_run.service routes to cloud_run google_cloud_run_v2_service.web",
+            "refs": [
+              "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web"
+            ],
+            "layer": null,
+            "additive": true
+          },
+          {
+            "analyzer": "per_hop",
+            "subject": "internet \u2192 google_compute_global_forwarding_rule.web",
+            "latency_ms": 42.0,
+            "share": 0.2727272727272727,
+            "detail": "forwarding_rule gcp-web-https is a public entry point",
+            "refs": [
+              "internet \u2192 google_compute_global_forwarding_rule.web"
+            ],
+            "layer": null,
+            "additive": true
+          },
+          {
+            "analyzer": "per_hop",
+            "subject": "google_cloud_run_v2_service.web \u2192 google_sql_database_instance.db",
+            "latency_ms": 6.0,
+            "share": 0.03896103896103896,
+            "detail": "google_cloud_run_v2_service.web template.containers env DB_INSTANCE references google_sql_database_instance.db.connection_name; gcp_iam_binding: google_project_iam_member.web_cloudsql_client grants roles/cloudsql.client to ${google_service_account.web.email} (the service account of google_cloud_run_v2_service.web) on google_sql_database_instance.db",
+            "refs": [
+              "google_cloud_run_v2_service.web \u2192 google_sql_database_instance.db"
+            ],
+            "layer": null,
+            "additive": true
+          },
+          {
+            "analyzer": "per_hop",
+            "subject": "google_compute_global_forwarding_rule.web \u2192 google_compute_target_https_proxy.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "forwarding_rule google_compute_global_forwarding_rule.web target routes to target_proxy google_compute_target_https_proxy.web",
+            "refs": [
+              "google_compute_global_forwarding_rule.web \u2192 google_compute_target_https_proxy.web"
+            ],
+            "layer": null,
+            "additive": true
+          },
+          {
+            "analyzer": "per_hop",
+            "subject": "google_compute_target_https_proxy.web \u2192 google_compute_url_map.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "target_proxy google_compute_target_https_proxy.web url_map routes to url_map google_compute_url_map.web",
+            "refs": [
+              "google_compute_target_https_proxy.web \u2192 google_compute_url_map.web"
+            ],
+            "layer": null,
+            "additive": true
+          },
+          {
+            "analyzer": "per_hop",
+            "subject": "google_compute_url_map.web \u2192 google_compute_backend_service.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "url_map google_compute_url_map.web default_service routes to backend_service google_compute_backend_service.web",
+            "refs": [
+              "google_compute_url_map.web \u2192 google_compute_backend_service.web"
+            ],
+            "layer": null,
+            "additive": true
+          },
+          {
+            "analyzer": "per_hop",
+            "subject": "google_compute_backend_service.web \u2192 google_compute_region_network_endpoint_group.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "backend_service google_compute_backend_service.web backend.group routes to neg google_compute_region_network_endpoint_group.web",
+            "refs": [
+              "google_compute_backend_service.web \u2192 google_compute_region_network_endpoint_group.web"
+            ],
+            "layer": null,
+            "additive": true
+          }
+        ],
+        "per_node": [
+          {
+            "analyzer": "per_node",
+            "subject": "google_cloud_run_v2_service.web",
+            "latency_ms": 106.0,
+            "share": 0.6883116883116883,
+            "detail": "1 call(s) into cloud_run \u2014 dominated by cold_start (service, 100 ms)",
+            "refs": [
+              "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web"
+            ],
+            "layer": "A2",
+            "additive": true
+          },
+          {
+            "analyzer": "per_node",
+            "subject": "google_compute_global_forwarding_rule.web",
+            "latency_ms": 42.0,
+            "share": 0.2727272727272727,
+            "detail": "1 call(s) into forwarding_rule \u2014 dominated by distance (distance, 40 ms)",
+            "refs": [
+              "internet \u2192 google_compute_global_forwarding_rule.web"
+            ],
+            "layer": "A1",
+            "additive": true
+          },
+          {
+            "analyzer": "per_node",
+            "subject": "google_sql_database_instance.db",
+            "latency_ms": 6.0,
+            "share": 0.03896103896103896,
+            "detail": "1 call(s) into cloud_sql \u2014 dominated by processing (service, 5 ms)",
+            "refs": [
+              "google_cloud_run_v2_service.web \u2192 google_sql_database_instance.db"
+            ],
+            "layer": "A2",
+            "additive": true
+          },
+          {
+            "analyzer": "per_node",
+            "subject": "google_compute_target_https_proxy.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "1 call(s) into target_proxy \u2014 dominated by distance (distance, 0 ms)",
+            "refs": [
+              "google_compute_global_forwarding_rule.web \u2192 google_compute_target_https_proxy.web"
+            ],
+            "layer": "A1",
+            "additive": true
+          },
+          {
+            "analyzer": "per_node",
+            "subject": "google_compute_url_map.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "1 call(s) into url_map \u2014 dominated by distance (distance, 0 ms)",
+            "refs": [
+              "google_compute_target_https_proxy.web \u2192 google_compute_url_map.web"
+            ],
+            "layer": "A1",
+            "additive": true
+          },
+          {
+            "analyzer": "per_node",
+            "subject": "google_compute_backend_service.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "1 call(s) into backend_service \u2014 dominated by distance (distance, 0 ms)",
+            "refs": [
+              "google_compute_url_map.web \u2192 google_compute_backend_service.web"
+            ],
+            "layer": "A1",
+            "additive": true
+          },
+          {
+            "analyzer": "per_node",
+            "subject": "google_compute_region_network_endpoint_group.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "1 call(s) into neg \u2014 dominated by distance (distance, 0 ms)",
+            "refs": [
+              "google_compute_backend_service.web \u2192 google_compute_region_network_endpoint_group.web"
+            ],
+            "layer": "A1",
+            "additive": true
+          }
+        ],
+        "per_category": [
+          {
+            "analyzer": "per_category",
+            "subject": "cold_start",
+            "latency_ms": 100.0,
+            "share": 0.6493506493506493,
+            "detail": "expected cold-start cost across 1 Cloud Run invocation(s) (gcp-web-web)",
+            "refs": [
+              "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web"
+            ],
+            "layer": "A2",
+            "additive": true
+          },
+          {
+            "analyzer": "per_category",
+            "subject": "distance",
+            "latency_ms": 42.0,
+            "share": 0.2727272727272727,
+            "detail": "1 internet \u2192 edge hop (fixed cost of being reachable); 6 same-region hop(s) (AZ spans)",
+            "refs": [
+              "internet \u2192 google_compute_global_forwarding_rule.web",
+              "google_compute_global_forwarding_rule.web \u2192 google_compute_target_https_proxy.web",
+              "google_compute_target_https_proxy.web \u2192 google_compute_url_map.web",
+              "google_compute_url_map.web \u2192 google_compute_backend_service.web",
+              "google_compute_backend_service.web \u2192 google_compute_region_network_endpoint_group.web",
+              "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web",
+              "google_cloud_run_v2_service.web \u2192 google_sql_database_instance.db"
+            ],
+            "layer": "A1",
+            "additive": true
+          },
+          {
+            "analyzer": "per_category",
+            "subject": "processing",
+            "latency_ms": 12.0,
+            "share": 0.07792207792207792,
+            "detail": "time inside services: cloud_run 5 ms, cloud_sql 5 ms, forwarding_rule 2 ms",
+            "refs": [
+              "internet \u2192 google_compute_global_forwarding_rule.web",
+              "google_compute_global_forwarding_rule.web \u2192 google_compute_target_https_proxy.web",
+              "google_compute_target_https_proxy.web \u2192 google_compute_url_map.web",
+              "google_compute_url_map.web \u2192 google_compute_backend_service.web",
+              "google_compute_backend_service.web \u2192 google_compute_region_network_endpoint_group.web",
+              "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web",
+              "google_cloud_run_v2_service.web \u2192 google_sql_database_instance.db"
+            ],
+            "layer": "A2",
+            "additive": true
+          },
+          {
+            "analyzer": "per_category",
+            "subject": "service",
+            "latency_ms": 112.0,
+            "share": 0.7272727272727273,
+            "detail": "processing + cold_start + transition (roll-up of the A2 lines above)",
+            "refs": [],
+            "layer": "A2",
+            "additive": false
+          },
+          {
+            "analyzer": "per_category",
+            "subject": "hops",
+            "latency_ms": 7.0,
+            "share": 0.0,
+            "detail": "6 sequential hop(s); each is a round-trip that adds distance and processing",
+            "refs": [],
+            "layer": "A3",
+            "additive": false
+          }
+        ],
+        "recommendations": [
+          {
+            "analyzer": "recommendations",
+            "subject": "a minimum instance count on gcp-web-web",
+            "latency_ms": 100.0,
+            "share": 0.6493506493506493,
+            "detail": "expected cold-start cost is 65% of the total across 1 Cloud Run invocation(s); a minimum instance count (min_instances) keeps a warm instance and removes it. Based on: gcp-web-neg \u2192 gcp-web-web (106 ms)",
+            "refs": [
+              "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web"
+            ],
+            "layer": null,
+            "additive": true
+          }
+        ]
+      },
+      "warnings": [],
+      "load": {}
+    },
+    {
+      "name": "gcp-web-https/gcp-web-cache",
+      "description": "inferred: gcp-web-https \u2192 google_compute_target_https_proxy.web \u2192 google_compute_url_map.web \u2192 gcp-web-backend \u2192 gcp-web-neg \u2192 gcp-web-web \u2192 gcp-web-cache",
+      "source": "inferred",
+      "total_ms": 149.5,
+      "percentiles": {},
+      "samples": null,
+      "shape": {
+        "sequential_hops": 6,
+        "parallel_groups": 0,
+        "fanout_copies": 0,
+        "fanout_waves": 0,
+        "wait_ms": 0.0,
+        "hop_count": 7,
+        "parallel_savings_ms": 0.0
+      },
+      "profile": {
+        "sources": [
+          "defaults"
+        ]
+      },
+      "hops": [
+        {
+          "src": "internet",
+          "dst": "google_compute_global_forwarding_rule.web",
+          "latency_ms": 42.0,
+          "breakdown": {
+            "distance": 40.0,
+            "processing": 2.0
+          },
+          "evidence": "forwarding_rule gcp-web-https is a public entry point",
+          "on_critical_path": true,
+          "group": null,
+          "percentiles": {},
+          "label": "internet \u2192 google_compute_global_forwarding_rule.web"
+        },
+        {
+          "src": "google_compute_global_forwarding_rule.web",
+          "dst": "google_compute_target_https_proxy.web",
+          "latency_ms": 0.0,
+          "breakdown": {
+            "distance": 0.0,
+            "processing": 0.0
+          },
+          "evidence": "forwarding_rule google_compute_global_forwarding_rule.web target routes to target_proxy google_compute_target_https_proxy.web",
+          "on_critical_path": true,
+          "group": null,
+          "percentiles": {},
+          "label": "google_compute_global_forwarding_rule.web \u2192 google_compute_target_https_proxy.web"
+        },
+        {
+          "src": "google_compute_target_https_proxy.web",
+          "dst": "google_compute_url_map.web",
+          "latency_ms": 0.0,
+          "breakdown": {
+            "distance": 0.0,
+            "processing": 0.0
+          },
+          "evidence": "target_proxy google_compute_target_https_proxy.web url_map routes to url_map google_compute_url_map.web",
+          "on_critical_path": true,
+          "group": null,
+          "percentiles": {},
+          "label": "google_compute_target_https_proxy.web \u2192 google_compute_url_map.web"
+        },
+        {
+          "src": "google_compute_url_map.web",
+          "dst": "google_compute_backend_service.web",
+          "latency_ms": 0.0,
+          "breakdown": {
+            "distance": 0.0,
+            "processing": 0.0
+          },
+          "evidence": "url_map google_compute_url_map.web default_service routes to backend_service google_compute_backend_service.web",
+          "on_critical_path": true,
+          "group": null,
+          "percentiles": {},
+          "label": "google_compute_url_map.web \u2192 google_compute_backend_service.web"
+        },
+        {
+          "src": "google_compute_backend_service.web",
+          "dst": "google_compute_region_network_endpoint_group.web",
+          "latency_ms": 0.0,
+          "breakdown": {
+            "distance": 0.0,
+            "processing": 0.0
+          },
+          "evidence": "backend_service google_compute_backend_service.web backend.group routes to neg google_compute_region_network_endpoint_group.web",
+          "on_critical_path": true,
+          "group": null,
+          "percentiles": {},
+          "label": "google_compute_backend_service.web \u2192 google_compute_region_network_endpoint_group.web"
+        },
+        {
+          "src": "google_compute_region_network_endpoint_group.web",
+          "dst": "google_cloud_run_v2_service.web",
+          "latency_ms": 106.0,
+          "breakdown": {
+            "distance": 1.0,
+            "processing": 5.0,
+            "cold_start": 100.0
+          },
+          "evidence": "neg google_compute_region_network_endpoint_group.web cloud_run.service routes to cloud_run google_cloud_run_v2_service.web",
+          "on_critical_path": true,
+          "group": null,
+          "percentiles": {},
+          "label": "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web"
+        },
+        {
+          "src": "google_cloud_run_v2_service.web",
+          "dst": "google_redis_instance.cache",
+          "latency_ms": 1.5,
+          "breakdown": {
+            "distance": 1.0,
+            "processing": 0.5
+          },
+          "evidence": "google_cloud_run_v2_service.web template.containers env REDIS_HOST references google_redis_instance.cache.host",
+          "on_critical_path": true,
+          "group": null,
+          "percentiles": {},
+          "label": "google_cloud_run_v2_service.web \u2192 google_redis_instance.cache"
+        }
+      ],
+      "findings": {
+        "per_hop": [
+          {
+            "analyzer": "per_hop",
+            "subject": "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web",
+            "latency_ms": 106.0,
+            "share": 0.7090301003344481,
+            "detail": "neg google_compute_region_network_endpoint_group.web cloud_run.service routes to cloud_run google_cloud_run_v2_service.web",
+            "refs": [
+              "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web"
+            ],
+            "layer": null,
+            "additive": true
+          },
+          {
+            "analyzer": "per_hop",
+            "subject": "internet \u2192 google_compute_global_forwarding_rule.web",
+            "latency_ms": 42.0,
+            "share": 0.2809364548494983,
+            "detail": "forwarding_rule gcp-web-https is a public entry point",
+            "refs": [
+              "internet \u2192 google_compute_global_forwarding_rule.web"
+            ],
+            "layer": null,
+            "additive": true
+          },
+          {
+            "analyzer": "per_hop",
+            "subject": "google_cloud_run_v2_service.web \u2192 google_redis_instance.cache",
+            "latency_ms": 1.5,
+            "share": 0.010033444816053512,
+            "detail": "google_cloud_run_v2_service.web template.containers env REDIS_HOST references google_redis_instance.cache.host",
+            "refs": [
+              "google_cloud_run_v2_service.web \u2192 google_redis_instance.cache"
+            ],
+            "layer": null,
+            "additive": true
+          },
+          {
+            "analyzer": "per_hop",
+            "subject": "google_compute_global_forwarding_rule.web \u2192 google_compute_target_https_proxy.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "forwarding_rule google_compute_global_forwarding_rule.web target routes to target_proxy google_compute_target_https_proxy.web",
+            "refs": [
+              "google_compute_global_forwarding_rule.web \u2192 google_compute_target_https_proxy.web"
+            ],
+            "layer": null,
+            "additive": true
+          },
+          {
+            "analyzer": "per_hop",
+            "subject": "google_compute_target_https_proxy.web \u2192 google_compute_url_map.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "target_proxy google_compute_target_https_proxy.web url_map routes to url_map google_compute_url_map.web",
+            "refs": [
+              "google_compute_target_https_proxy.web \u2192 google_compute_url_map.web"
+            ],
+            "layer": null,
+            "additive": true
+          },
+          {
+            "analyzer": "per_hop",
+            "subject": "google_compute_url_map.web \u2192 google_compute_backend_service.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "url_map google_compute_url_map.web default_service routes to backend_service google_compute_backend_service.web",
+            "refs": [
+              "google_compute_url_map.web \u2192 google_compute_backend_service.web"
+            ],
+            "layer": null,
+            "additive": true
+          },
+          {
+            "analyzer": "per_hop",
+            "subject": "google_compute_backend_service.web \u2192 google_compute_region_network_endpoint_group.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "backend_service google_compute_backend_service.web backend.group routes to neg google_compute_region_network_endpoint_group.web",
+            "refs": [
+              "google_compute_backend_service.web \u2192 google_compute_region_network_endpoint_group.web"
+            ],
+            "layer": null,
+            "additive": true
+          }
+        ],
+        "per_node": [
+          {
+            "analyzer": "per_node",
+            "subject": "google_cloud_run_v2_service.web",
+            "latency_ms": 106.0,
+            "share": 0.7090301003344481,
+            "detail": "1 call(s) into cloud_run \u2014 dominated by cold_start (service, 100 ms)",
+            "refs": [
+              "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web"
+            ],
+            "layer": "A2",
+            "additive": true
+          },
+          {
+            "analyzer": "per_node",
+            "subject": "google_compute_global_forwarding_rule.web",
+            "latency_ms": 42.0,
+            "share": 0.2809364548494983,
+            "detail": "1 call(s) into forwarding_rule \u2014 dominated by distance (distance, 40 ms)",
+            "refs": [
+              "internet \u2192 google_compute_global_forwarding_rule.web"
+            ],
+            "layer": "A1",
+            "additive": true
+          },
+          {
+            "analyzer": "per_node",
+            "subject": "google_redis_instance.cache",
+            "latency_ms": 1.5,
+            "share": 0.010033444816053512,
+            "detail": "1 call(s) into memorystore \u2014 dominated by distance (distance, 1 ms)",
+            "refs": [
+              "google_cloud_run_v2_service.web \u2192 google_redis_instance.cache"
+            ],
+            "layer": "A1",
+            "additive": true
+          },
+          {
+            "analyzer": "per_node",
+            "subject": "google_compute_target_https_proxy.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "1 call(s) into target_proxy \u2014 dominated by distance (distance, 0 ms)",
+            "refs": [
+              "google_compute_global_forwarding_rule.web \u2192 google_compute_target_https_proxy.web"
+            ],
+            "layer": "A1",
+            "additive": true
+          },
+          {
+            "analyzer": "per_node",
+            "subject": "google_compute_url_map.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "1 call(s) into url_map \u2014 dominated by distance (distance, 0 ms)",
+            "refs": [
+              "google_compute_target_https_proxy.web \u2192 google_compute_url_map.web"
+            ],
+            "layer": "A1",
+            "additive": true
+          },
+          {
+            "analyzer": "per_node",
+            "subject": "google_compute_backend_service.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "1 call(s) into backend_service \u2014 dominated by distance (distance, 0 ms)",
+            "refs": [
+              "google_compute_url_map.web \u2192 google_compute_backend_service.web"
+            ],
+            "layer": "A1",
+            "additive": true
+          },
+          {
+            "analyzer": "per_node",
+            "subject": "google_compute_region_network_endpoint_group.web",
+            "latency_ms": 0.0,
+            "share": 0.0,
+            "detail": "1 call(s) into neg \u2014 dominated by distance (distance, 0 ms)",
+            "refs": [
+              "google_compute_backend_service.web \u2192 google_compute_region_network_endpoint_group.web"
+            ],
+            "layer": "A1",
+            "additive": true
+          }
+        ],
+        "per_category": [
+          {
+            "analyzer": "per_category",
+            "subject": "cold_start",
+            "latency_ms": 100.0,
+            "share": 0.6688963210702341,
+            "detail": "expected cold-start cost across 1 Cloud Run invocation(s) (gcp-web-web)",
+            "refs": [
+              "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web"
+            ],
+            "layer": "A2",
+            "additive": true
+          },
+          {
+            "analyzer": "per_category",
+            "subject": "distance",
+            "latency_ms": 42.0,
+            "share": 0.2809364548494983,
+            "detail": "1 internet \u2192 edge hop (fixed cost of being reachable); 6 same-region hop(s) (AZ spans)",
+            "refs": [
+              "internet \u2192 google_compute_global_forwarding_rule.web",
+              "google_compute_global_forwarding_rule.web \u2192 google_compute_target_https_proxy.web",
+              "google_compute_target_https_proxy.web \u2192 google_compute_url_map.web",
+              "google_compute_url_map.web \u2192 google_compute_backend_service.web",
+              "google_compute_backend_service.web \u2192 google_compute_region_network_endpoint_group.web",
+              "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web",
+              "google_cloud_run_v2_service.web \u2192 google_redis_instance.cache"
+            ],
+            "layer": "A1",
+            "additive": true
+          },
+          {
+            "analyzer": "per_category",
+            "subject": "processing",
+            "latency_ms": 7.5,
+            "share": 0.05016722408026756,
+            "detail": "time inside services: cloud_run 5 ms, forwarding_rule 2 ms, memorystore 0 ms",
+            "refs": [
+              "internet \u2192 google_compute_global_forwarding_rule.web",
+              "google_compute_global_forwarding_rule.web \u2192 google_compute_target_https_proxy.web",
+              "google_compute_target_https_proxy.web \u2192 google_compute_url_map.web",
+              "google_compute_url_map.web \u2192 google_compute_backend_service.web",
+              "google_compute_backend_service.web \u2192 google_compute_region_network_endpoint_group.web",
+              "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web",
+              "google_cloud_run_v2_service.web \u2192 google_redis_instance.cache"
+            ],
+            "layer": "A2",
+            "additive": true
+          },
+          {
+            "analyzer": "per_category",
+            "subject": "service",
+            "latency_ms": 107.5,
+            "share": 0.7190635451505016,
+            "detail": "processing + cold_start + transition (roll-up of the A2 lines above)",
+            "refs": [],
+            "layer": "A2",
+            "additive": false
+          },
+          {
+            "analyzer": "per_category",
+            "subject": "hops",
+            "latency_ms": 7.0,
+            "share": 0.0,
+            "detail": "6 sequential hop(s); each is a round-trip that adds distance and processing",
+            "refs": [],
+            "layer": "A3",
+            "additive": false
+          }
+        ],
+        "recommendations": [
+          {
+            "analyzer": "recommendations",
+            "subject": "a minimum instance count on gcp-web-web",
+            "latency_ms": 100.0,
+            "share": 0.6688963210702341,
+            "detail": "expected cold-start cost is 67% of the total across 1 Cloud Run invocation(s); a minimum instance count (min_instances) keeps a warm instance and removes it. Based on: gcp-web-neg \u2192 gcp-web-web (106 ms)",
+            "refs": [
+              "google_compute_region_network_endpoint_group.web \u2192 google_cloud_run_v2_service.web"
+            ],
+            "layer": null,
+            "additive": true
+          }
+        ]
+      },
+      "warnings": [],
+      "load": {}
+    }
+  ],
+  "capacity": {}
+}

@@ -4,13 +4,13 @@
                          [--walker load --load load.yaml]   users-until-it-breaks (M8)
                          [--scenario NAME ...] [--format terraform] [--all-hops]
                          [--provider aws|gcp]   (default: auto-detected from resource types)
-                         [-o text -o json -o markdown]
+                         [-o text -o json -o markdown -o html]   html = the dashboard, one file
     iacsim graph ./infra                 dump graph.json only (M1 milestone check)
     iacsim diff  ./before ./after        compare two snapshots
                  [--fail-on-regression 50ms|10%] [--scenario NAME] [--align-by id|label]
-                 [-o text -o json -o markdown]   exit 2 when a total grows past the threshold
+                 [-o text -o json -o markdown -o html]   exit 2 when a total grows past the threshold
     iacsim validate ./infra [--strict]   parse + normalise + check scenarios.yaml, no simulation
-    iacsim view  ./infra [--port N] [--no-open]   serve the graph viewer for .iacsim/report.json
+    iacsim view  ./infra [--port N] [--no-open]   serve the dashboard for .iacsim/report.json
     iacsim calibrate ./infra [--source cloudwatch|fake] [--window 7d] [--out measured.yaml]
                              [--region R] [--dry-run]   measured numbers → profile YAML (rung 2)
     iacsim plugins                       list every registered implementation
@@ -167,7 +167,8 @@ def run(
                              help="load walker: arrival rates file (default load.yaml next to scenarios.yaml)"),
     fmt: str = typer.Option(None, "--format", help="force parser: terraform | cloudformation"),
     all_hops: bool = typer.Option(False, "--all-hops", help="show every hop in path order, not just the top-N"),
-    output: list[str] = typer.Option(None, "--output", "-o", help="reporters: text | json | markdown (repeatable)"),
+    output: list[str] = typer.Option(None, "--output", "-o",
+                                     help="reporters: text | json | markdown | html (repeatable)"),
     region: str = typer.Option(None, help="region fallback: CloudFormation templates, or Terraform "
                                           "providers whose region does not resolve"),
     workspace: str = typer.Option(None, help="value of terraform.workspace (default: default)"),
@@ -231,7 +232,8 @@ def diff(
                                  help="match nodes by id (same format) or label (Terraform vs CloudFormation)"),
     fail_on_regression: str = typer.Option(None, "--fail-on-regression",
                                            help="exit 2 if any total grows more than e.g. 50ms or 10%"),
-    output: list[str] = typer.Option(None, "--output", "-o", help="reporters: text | json | markdown (repeatable)"),
+    output: list[str] = typer.Option(None, "--output", "-o",
+                                     help="reporters: text | json | markdown | html (repeatable)"),
     provider: str = typer.Option(None, help="normaliser for both sides: aws | gcp | auto = majority "
                                             "resource-type prefix (default)"),
 ) -> None:
@@ -316,8 +318,9 @@ def view(
     duration: float = typer.Option(None, help="serve for N seconds then stop (default: until Ctrl-C)"),
     provider: str = typer.Option(None, help="normaliser: aws | gcp | auto = majority resource-type prefix (default)"),
 ) -> None:
-    """Open the graph viewer: runs the pipeline if .iacsim/report.json is
-    missing, then serves .iacsim/ over HTTP and opens the browser."""
+    """Open the dashboard: runs the pipeline if .iacsim/report.json is
+    missing or stale, renders it into .iacsim/index.html, serves .iacsim/
+    over HTTP and opens the browser."""
     from iacsim.viewer import bind, prepare
     from iacsim.viewer import run as serve
     _bootstrap(target)

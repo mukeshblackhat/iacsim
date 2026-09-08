@@ -4,7 +4,7 @@
 PY := .venv/bin/python
 COV_MIN := 85
 
-.PHONY: check test lint cov examples hooks ci
+.PHONY: check test lint cov examples dashboard-sample dashboard hooks ci
 
 check: lint test cov          ## lint + tests + coverage gate
 
@@ -36,6 +36,18 @@ examples:                     ## smoke: every example still parses, runs, diffs
 	.venv/bin/iacsim diff  examples/gcp-web examples/gcp-web-bad -o json
 	.venv/bin/iacsim graph examples/real-world/gcp-glb-mig-backend
 	.venv/bin/iacsim run   examples/real-world/gcp-ntier-serverless-web -o json
+	$(MAKE) dashboard-sample
+
+dashboard-sample:             ## regenerate examples/dashboard/ (real output; tests/test_dashboard_sample.py holds it)
+	.venv/bin/iacsim run   examples/gcp-web -o json -o html
+	cp examples/gcp-web/.iacsim/report.json examples/gcp-web/.iacsim/report.html examples/dashboard/gcp-web/
+	.venv/bin/iacsim run   examples/foosh-serverless --walker load -o json -o html
+	cp examples/foosh-serverless/.iacsim/report.json examples/foosh-serverless/.iacsim/report.html examples/dashboard/foosh-load/
+	.venv/bin/iacsim diff  examples/classic-web examples/classic-web-bad -o json -o html
+	cp examples/classic-web-bad/.iacsim/diff.json examples/classic-web-bad/.iacsim/diff.html examples/dashboard/classic-web-diff/
+
+dashboard:                    ## open the sample dashboard in the browser
+	open examples/dashboard/gcp-web/report.html 2>/dev/null || xdg-open examples/dashboard/gcp-web/report.html
 
 hooks:                        ## install the git pre-commit hook
 	printf '#!/bin/sh\nmake check\n' > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit

@@ -1,24 +1,29 @@
-"""`iacsim view` — the static graph viewer.                                  [M6 ✅]
+"""`iacsim view` — serve the dashboard for one target.                        [M6 ✅]
 
-`index.html` is one self-contained page (inline CSS/JS, no CDN) that reads the
-schema-2 `report.json` (or a bare `graph.json`) sitting next to it and draws
-the infra graph in region/AZ swimlanes with the scenario paths overlaid. This
-module only prepares the directory and serves it:
+`index.html` is the dashboard *template*: one self-contained page (inline
+CSS/JS, no CDN, no build step) with a single placeholder that the html reporter
+(`iacsim/reporter/html_.py`) fills with the schema-2 report as a JSON blob. The
+page draws the infra graph in region/AZ swimlanes with the selected scenario's
+path, hop widths and slowest hop on it, then the numbers and findings beside
+it. `iacsim run … -o html` produces exactly the same page as `report.html`.
+This module only prepares the directory and serves it:
 
     prepare(target, cfg)  → <target>/.iacsim/ with report.json, graph.json, index.html
                             (the pipeline runs when report.json is missing or older than
-                            the IaC / scenarios / config files next to the target)
+                            the IaC / scenarios / config files next to the target;
+                            index.html is always re-rendered from report.json)
     bind(directory, port) → (server, url)   — the URL is known before anything blocks
     run(server, …)        → serves until Ctrl-C (or `duration` seconds); opens the browser
     serve(directory, …)   → bind + run in one call
 
-The viewer never imports Python internals — the JSON files are its whole API,
-so it works on any report.json from any version that keeps schema 2.
+Nothing is fetched at runtime — the data is inlined, so the served page and
+the `file://` page are the same bytes. The page reads only the JSON contract,
+so any report.json that keeps schema 2 renders; an older one gets a banner.
 """
 
 from __future__ import annotations
 
-import shutil
+import json
 import threading
 import time
 import webbrowser
@@ -27,6 +32,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from iacsim.core.config import Config
+from iacsim.reporter.html_ import render_page
 from iacsim.reporter.writer import write_graph, write_reports
 
 VIEWER_HTML = Path(__file__).with_name("index.html")
@@ -35,16 +41,19 @@ INPUT_GLOBS = ("*.tf", "*.tf.json", "*.tofu", "*.tfvars", "template.json", "temp
 
 
 def prepare(target: Path, cfg: Config) -> Path:
-    """Make sure a fresh report.json / graph.json exist for `target`, drop index.html beside them."""
+    """Make sure a fresh report.json / graph.json exist for `target`, then render
+    the dashboard from report.json into index.html beside them."""
     from iacsim.core import pipeline
     base = target if target.is_dir() else target.parent
     out_dir = base / cfg.get("report.out_dir")
     out_dir.mkdir(parents=True, exist_ok=True)
-    if is_stale(out_dir / "report.json", base):
+    report = out_dir / "report.json"
+    if is_stale(report, base):
         output = pipeline.run(target, cfg)
         write_reports(["json"], lambda r: r.render(output.findings, output.graph), "report", out_dir)
         write_graph(output.graph, out_dir)
-    shutil.copyfile(VIEWER_HTML, out_dir / "index.html")
+    page = render_page(json.loads(report.read_text(encoding="utf-8")), kind="report")
+    (out_dir / "index.html").write_text(page, encoding="utf-8")
     return out_dir
 
 

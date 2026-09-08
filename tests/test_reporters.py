@@ -19,7 +19,7 @@ def output(request):
     return request.getfixturevalue(request.param)
 
 
-@pytest.mark.parametrize("name", ["text", "markdown", "json"])
+@pytest.mark.parametrize("name", ["text", "markdown", "json", "html"])
 def test_every_reporter_renders_every_example(output, name):
     rendered = REPORTERS.get(name)().render(output.findings, output.graph)
     assert rendered and output.findings[0].scenario in rendered
@@ -57,3 +57,20 @@ def test_json_contract(output):
                 assert set(finding) == FINDING_KEYS
         additive = [f["share"] for f in scenario["findings"]["per_category"] if f["additive"]]
         assert sum(additive) == pytest.approx(1.0)
+
+
+def test_html_is_self_contained(output):
+    """One file, nothing fetched: no external script/style, the data inlined as a
+    parseable blob, every Brief heading present, no terminal bar glyphs."""
+    from iacsim.reporter.html_ import SECTION_TITLES
+    html = REPORTERS.get("html")().render(output.findings, output.graph)
+    assert html.startswith("<!doctype html>")
+    for forbidden in ("<script src=", "<link ", "@import", "url(http"):
+        assert forbidden not in html
+    blob = html.split('id="iacsim-data">', 1)[1].split("</script>", 1)[0]
+    doc = json.loads(blob)
+    assert doc["kind"] == "report" and doc["report"]["schema_version"] == "2"
+    assert [s["name"] for s in doc["report"]["scenarios"]] == [f.scenario for f in output.findings]
+    for _key, title in SECTION_TITLES:
+        assert title in html
+    assert "█" not in html

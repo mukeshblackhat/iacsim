@@ -1,1 +1,1 @@
-from iacsim.reporter import json_, markdown, text  # noqa: F401
+from iacsim.reporter import html_, json_, markdown, text  # noqa: F401

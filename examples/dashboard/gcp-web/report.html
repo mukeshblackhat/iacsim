@@ -1,0 +1,592 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>iacsim dashboard</title>
+<style>
+  :root {
+    --bg: #fafaf8; --fg: #1f2328; --muted: #6b7280; --panel: #ffffff; --line: #d0d7de;
+    --lane: #f1f3f5; --lane-line: #dfe3e8;
+    --compute: #4f8bd6; --datastore: #d68a2e; --lb: #7c5cd6; --gateway: #2e9e6b; --queue: #c94f7c;
+    --orchestrator: #b05cd6; --cdn: #3ca6b8; --network: #9aa3ad; --external: #8b8f94;
+    --distance: #4f8bd6; --processing: #2e9e6b; --cold_start: #e07b1f; --other: #9aa3ad;
+    --accent: #e0245e; --faded: 0.18;
+    --warn: #d4a017; --sat: #c0392b; --focus: #2f6fed;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0f1216; --fg: #e6e8eb; --muted: #9aa3ad; --panel: #171b21; --line: #2b323b;
+            --lane: #151920; --lane-line: #232a33; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--fg); }
+  [hidden] { display: none !important; }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .skip { position: absolute; left: -9999px; top: 8px; z-index: 20; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; color: var(--fg); }
+  .skip:focus { left: 8px; }
+  #notice { padding: 10px 14px; background: var(--panel); border-left: 4px solid var(--warn); }
+  #notice code { font-size: 12px; }
+
+  /* ---- header */
+  header { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { font-size: 15px; margin: 0; }
+  .meta { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .meta b { color: var(--fg); font-weight: 600; }
+  [role="tablist"] { display: flex; flex-wrap: wrap; gap: 4px; }
+  [role="tab"] { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-variant-numeric: tabular-nums; }
+  [role="tab"] small { color: var(--muted); margin-left: 6px; }
+  [role="tab"][aria-selected="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+  [role="tab"][aria-selected="true"] small { color: var(--bg); opacity: .75; }
+  .toggles { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); margin-left: auto; }
+  .toggles input { vertical-align: -2px; margin: 0 4px 0 0; }
+
+  /* ---- KPI strip */
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; padding: 10px 14px 0; }
+  .kpi { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-width: 0; }
+  .kpi .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  .kpi .value { font-size: 18px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .kpi .value.text { font-size: 13px; padding-top: 3px; }
+  .kpi .value small { font-size: 12px; color: var(--muted); }
+  .kpi.accent { border-color: var(--accent); }
+  .kpi.accent .value { color: var(--accent); }
+  .kpi a { color: inherit; text-decoration: none; display: block; }
+
+  /* ---- main grid: map + rail; tables, capacity, legend below */
+  main { display: grid; grid-template-columns: minmax(0, 65fr) minmax(360px, 35fr); gap: 12px; padding: 10px 14px; position: relative; }
+  main:has(#rail:empty) { grid-template-columns: 1fr; }
+  @media (max-width: 1100px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
+  #map { position: relative; }
+  #stage { overflow: auto; padding: 8px; }
+  #stage svg { display: block; }
+  #stage.fit svg { width: 100%; height: auto; }
+  #rail:empty, #tables:empty, #capacity:empty, #warnings:empty { display: none; }
+  #rail, #tables, #capacity, #warnings { padding: 12px 14px; }
+  #tables, #capacity, #warnings { margin: 0 14px 12px; }
+  #drawer { position: absolute; top: 0; right: 0; bottom: 0; width: min(100%, 420px); background: var(--panel); border-left: 1px solid var(--line); box-shadow: -8px 0 24px rgba(0, 0, 0, .12); overflow: auto; padding: 12px 14px; z-index: 6; }
+  #tooltip { position: absolute; pointer-events: none; background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; box-shadow: 0 4px 14px rgba(0, 0, 0, .15); max-width: 320px; z-index: 5; font-size: 12px; }
+  #tooltip b { font-weight: 600; }
+  #tooltip .sub { color: var(--muted); }
+  .bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--lane-line); margin: 5px 0 3px; }
+  .bar span { display: block; height: 100%; }
+  .breakdown { color: var(--muted); }
+  .breakdown i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 3px; vertical-align: -1px; background: var(--c); }
+
+  /* ---- legend */
+  #legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted); padding: 0 14px 14px; }
+  #legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; background: var(--c); }
+  #legend .edge::before { height: 3px; border-radius: 2px; vertical-align: 2px; }
+  #legend .slowest::before { height: 5px; background: var(--accent); }
+  #legend .badge::before { border-radius: 50%; background: var(--accent); }
+  #legend .hollow::before { border-radius: 50%; background: var(--panel); border: 2px solid var(--accent); width: 6px; height: 6px; }
+
+  /* ---- the map (SVG) */
+  .lane { fill: var(--lane); stroke: var(--lane-line); }
+  .lane-label { fill: var(--muted); font-size: 12px; font-weight: 600; }
+  .az-label { fill: var(--muted); font-size: 10px; }
+  .node { cursor: pointer; outline: none; transition: opacity .15s; }
+  .node rect.box { stroke: var(--panel); stroke-width: 1.5; rx: 6; }
+  .node text { fill: #fff; font-size: 11px; pointer-events: none; }
+  .node .sub { font-size: 9px; opacity: .85; }
+  .node .share-bg { fill: var(--lane-line); }
+  .node .share { fill: var(--accent); }
+  .node .ms { fill: var(--muted); font-size: 10px; text-anchor: end; font-variant-numeric: tabular-nums; }
+  .node.muted { opacity: var(--faded); }
+  .node.selected rect.box, .node.highlight rect.box { stroke: var(--accent); stroke-width: 3; }
+  .node:focus-visible rect.box, .node.hover rect.box { stroke: var(--focus); stroke-width: 3; }
+  .edge { outline: none; transition: opacity .15s; }
+  .edge path { fill: none; stroke-linecap: round; }
+  .edge path.under { stroke: var(--accent); opacity: 0; }
+  .edge.on path.under { opacity: .3; }
+  .edge.slowest path.under { opacity: 1; }
+  .edge.selected path.under, .edge.highlight path.under { stroke: var(--accent); opacity: 1; }
+  .edge:focus-visible path.under, .edge.hover path.under { stroke: var(--focus); opacity: .9; }
+  .edge path.hit { stroke: transparent; stroke-width: 14px; cursor: pointer; }
+  .edge.muted { opacity: var(--faded); }
+  .badge { pointer-events: none; }
+  .badge circle { fill: var(--accent); stroke: var(--accent); stroke-width: 1.5; }
+  .badge text { fill: #fff; font-size: 10px; font-weight: 700; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+  .badge.hollow circle { fill: var(--panel); }
+  .badge.hollow text { fill: var(--accent); }
+  .slow-label { font-size: 10px; font-weight: 700; fill: var(--accent); text-anchor: middle; paint-order: stroke; stroke: var(--panel); stroke-width: 3px; }
+
+  /* ---- diff page (minimal until WP5) */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-variant-numeric: tabular-nums; }
+  .tile .name { font-weight: 600; overflow-wrap: anywhere; }
+  .tile .delta { font-size: 16px; }
+  .tile .worse { color: var(--accent); }
+  .tile .better { color: var(--processing); }
+  .tile .sub { color: var(--muted); font-size: 12px; }
+  h2 { font-size: 13px; margin: 0 0 6px; }
+  h3 { font-size: 12px; color: var(--muted); margin: 12px 0 4px; text-transform: uppercase; letter-spacing: .04em; }
+  ul.changes { margin: 0; padding-left: 18px; }
+  ul.changes code { font-size: 12px; }
+</style>
+</head>
+<body>
+<a class="skip" href="#tables">Skip to hop table</a>
+<div id="notice" role="status" hidden></div>
+<header id="header">
+  <h1>iacsim</h1>
+  <span class="meta" id="meta"></span>
+  <div id="tabs" role="tablist" aria-label="scenarios"></div>
+  <div class="toggles" id="toggles">
+    <label><input type="checkbox" id="t-network"> network nodes</label>
+    <label><input type="checkbox" id="t-alledges"> every inferred edge</label>
+    <label><input type="checkbox" id="t-allhops"> all hops</label>
+    <label><input type="checkbox" id="t-fit" checked> fit to width</label>
+  </div>
+</header>
+<section id="kpis" class="kpis" aria-label="key numbers"></section>
+<main>
+  <section id="map" class="panel" aria-label="the map">
+    <div id="stage" class="fit"><svg id="svg" xmlns="http://www.w3.org/2000/svg"></svg></div>
+    <div id="tooltip" role="tooltip" hidden></div>
+  </section>
+  <aside id="rail" class="panel" aria-label="findings"></aside>       <!-- WP2: where the time goes · bottlenecks · recommendations -->
+  <div id="drawer" role="dialog" aria-modal="false" hidden></div>      <!-- WP3: node / edge detail -->
+</main>
+<section id="tables" class="panel" aria-label="tables"></section>     <!-- WP2: hops · critical path · tail risk -->
+<section id="capacity" class="panel" aria-label="users until it breaks"></section>  <!-- WP4: heatmap · p99 chart · what breaks first -->
+<section id="warnings" class="panel" aria-label="warnings"></section> <!-- WP2 -->
+<footer id="legend" aria-label="legend"></footer>
+<script type="application/json" id="iacsim-data">{"kind":"report","options":{"top_n":10,"all_hops":false},"sections":[{"key":"where","title":"Where the time goes"},{"key":"bottlenecks","title":"Top bottlenecks"},{"key":"recommendations","title":"Recommendations"},{"key":"hops","title":"Hops"},{"key":"critical_path","title":"Critical path"},{"key":"tail_risk","title":"Tail risk (p99 − p50)"},{"key":"warnings","title":"Warnings"},{"key":"capacity","title":"users until it breaks"},{"key":"utilisation","title":"Utilisation by users"},{"key":"p99_sweep","title":"p99 by users"},{"key":"saturation","title":"What breaks first"}],"report":{"schema_version":"2","generated_at":"2026-09-08T07:39:19+00:00","profile":{"sources":["defaults"]},"graph":{"nodes":{"google_compute_network.vpc":{"id":"google_compute_network.vpc","kind":"network","subtype":"vpc","placement":{"region":"us-central1","az":null,"vpc":null,"subnet":null},"attrs":{},"label":"gcp-web"},"google_compute_subnetwork.app":{"id":"google_compute_subnetwork.app","kind":"network","subtype":"subnet","placement":{"region":"us-central1","az":null,"vpc":"google_compute_network.vpc","subnet":null},"attrs":{"region":"us-central1","network":"${google_compute_network.vpc.id}"},"label":"gcp-web-app"},"google_cloud_run_v2_service.web":{"id":"google_cloud_run_v2_service.web","kind":"compute","subtype":"cloud_run","placement":{"region":"us-central1","az":null,"vpc":"google_compute_network.vpc","subnet":"google_compute_subnetwork.app"},"attrs":{"location":"us-central1","ingress":"INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER","max_instances":10},"label":"gcp-web-web"},"google_sql_database_instance.db":{"id":"google_sql_database_instance.db","kind":"datastore","subtype":"cloud_sql","placement":{"region":"us-central1","az":null,"vpc":"google_compute_network.vpc","subnet":null},"attrs":{"region":"us-central1","database_version":"POSTGRES_16","tier":"db-custom-2-7680"},"label":"gcp-web-db"},"google_redis_instance.cache":{"id":"google_redis_instance.cache","kind":"datastore","subtype":"memorystore","placement":{"region":"us-central1","az":null,"vpc":null,"subnet":null},"attrs":{"region":"us-central1","tier":"BASIC","memory_size_gb":1},"label":"gcp-web-cache"},"google_compute_region_network_endpoint_group.web":{"id":"google_compute_region_network_endpoint_group.web","kind":"lb","subtype":"neg","placement":{"region":"us-central1","az":null,"vpc":null,"subnet":null},"attrs":{"region":"us-central1"},"label":"gcp-web-neg"},"google_compute_backend_service.web":{"id":"google_compute_backend_service.web","kind":"lb","subtype":"backend_service","placement":{"region":"us-central1","az":null,"vpc":null,"subnet":null},"attrs":{"load_balancing_scheme":"EXTERNAL_MANAGED","protocol":"HTTPS"},"label":"gcp-web-backend"},"google_compute_url_map.web":{"id":"google_compute_url_map.web","kind":"lb","subtype":"url_map","placement":{"region":"us-central1","az":null,"vpc":null,"subnet":null},"attrs":{},"label":"gcp-web"},"google_compute_target_https_proxy.web":{"id":"google_compute_target_https_proxy.web","kind":"lb","subtype":"target_proxy","placement":{"region":"us-central1","az":null,"vpc":null,"subnet":null},"attrs":{},"label":"gcp-web"},"google_compute_global_forwarding_rule.web":{"id":"google_compute_global_forwarding_rule.web","kind":"lb","subtype":"forwarding_rule","placement":{"region":"us-central1","az":null,"vpc":null,"subnet":null},"attrs":{"load_balancing_scheme":"EXTERNAL_MANAGED","port_range":"443","ip_protocol":"TCP"},"label":"gcp-web-https"},"internet":{"id":"internet","kind":"external","subtype":"internet","placement":{"region":null,"az":null,"vpc":null,"subnet":null},"attrs":{},"label":"internet"}},"edges":[{"src":"internet","dst":"google_compute_global_forwarding_rule.web","kind":"invoke","confidence":"high","evidence":"forwarding_rule gcp-web-https is a public entry point","rule":"normaliser","latency":{"expected":22.0,"breakdown":{"distance":20.0,"processing":2.0}},"ops":["invoke"]},{"src":"google_compute_region_network_endpoint_group.web","dst":"google_cloud_run_v2_service.web","kind":"route","confidence":"high","evidence":"neg google_compute_region_network_endpoint_group.web cloud_run.service routes to cloud_run google_cloud_run_v2_service.web","rule":"gcp_lb_chain","latency":{"expected":105.5,"breakdown":{"distance":0.5,"processing":5.0,"cold_start":100.0}},"ops":["route"]},{"src":"google_compute_backend_service.web","dst":"google_compute_region_network_endpoint_group.web","kind":"route","confidence":"high","evidence":"backend_service google_compute_backend_service.web backend.group routes to neg google_compute_region_network_endpoint_group.web","rule":"gcp_lb_chain","latency":{"expected":0.0,"breakdown":{"distance":0.0,"processing":0.0}},"ops":["route"]},{"src":"google_compute_url_map.web","dst":"google_compute_backend_service.web","kind":"route","confidence":"high","evidence":"url_map google_compute_url_map.web default_service routes to backend_service google_compute_backend_service.web","rule":"gcp_lb_chain","latency":{"expected":0.0,"breakdown":{"distance":0.0,"processing":0.0}},"ops":["route"]},{"src":"google_compute_target_https_proxy.web","dst":"google_compute_url_map.web","kind":"route","confidence":"high","evidence":"target_proxy google_compute_target_https_proxy.web url_map routes to url_map google_compute_url_map.web","rule":"gcp_lb_chain","latency":{"expected":0.0,"breakdown":{"distance":0.0,"processing":0.0}},"ops":["route"]},{"src":"google_compute_global_forwarding_rule.web","dst":"google_compute_target_https_proxy.web","kind":"route","confidence":"high","evidence":"forwarding_rule google_compute_global_forwarding_rule.web target routes to target_proxy google_compute_target_https_proxy.web","rule":"gcp_lb_chain","latency":{"expected":0.0,"breakdown":{"distance":0.0,"processing":0.0}},"ops":["route"]},{"src":"google_cloud_run_v2_service.web","dst":"google_sql_database_instance.db","kind":"read","confidence":"medium","evidence":"google_cloud_run_v2_service.web template.containers env DB_INSTANCE references google_sql_database_instance.db.connection_name; gcp_iam_binding: google_project_iam_member.web_cloudsql_client grants roles/cloudsql.client to ${google_service_account.web.email} (the service account of google_cloud_run_v2_service.web) on google_sql_database_instance.db","rule":"env_var+gcp_iam_binding","latency":{"expected":5.5,"breakdown":{"distance":0.5,"processing":5.0}},"ops":["read"]},{"src":"google_cloud_run_v2_service.web","dst":"google_redis_instance.cache","kind":"read","confidence":"medium","evidence":"google_cloud_run_v2_service.web template.containers env REDIS_HOST references google_redis_instance.cache.host","rule":"env_var","latency":{"expected":1.0,"breakdown":{"distance":0.5,"processing":0.5}},"ops":["read"]}],"source_format":"terraform","warnings":[],"schema_version":"2"},"scenarios":[{"name":"page_load","description":"GET /products — one page render, two sequential DB queries","source":"declared","total_ms":160.0,"percentiles":{},"samples":null,"shape":{"sequential_hops":8,"parallel_groups":0,"fanout_copies":0,"fanout_waves":0,"wait_ms":0.0,"hop_count":9,"parallel_savings_ms":0.0},"profile":{"sources":["defaults"]},"hops":[{"src":"internet","dst":"google_compute_global_forwarding_rule.web","latency_ms":42.0,"breakdown":{"distance":40.0,"processing":2.0},"evidence":"forwarding_rule gcp-web-https is a public entry point","on_critical_path":true,"group":null,"percentiles":{},"label":"internet → google_compute_global_forwarding_rule.web"},{"src":"google_compute_global_forwarding_rule.web","dst":"google_compute_target_https_proxy.web","latency_ms":0.0,"breakdown":{"distance":0.0,"processing":0.0},"evidence":"forwarding_rule google_compute_global_forwarding_rule.web target routes to target_proxy google_compute_target_https_proxy.web","on_critical_path":true,"group":null,"percentiles":{},"label":"google_compute_global_forwarding_rule.web → google_compute_target_https_proxy.web"},{"src":"google_compute_target_https_proxy.web","dst":"google_compute_url_map.web","latency_ms":0.0,"breakdown":{"distance":0.0,"processing":0.0},"evidence":"target_proxy google_compute_target_https_proxy.web url_map routes to url_map google_compute_url_map.web","on_critical_path":true,"group":null,"percentiles":{},"label":"google_compute_target_https_proxy.web → google_compute_url_map.web"},{"src":"google_compute_url_map.web","dst":"google_compute_backend_service.web","latency_ms":0.0,"breakdown":{"distance":0.0,"processing":0.0},"evidence":"url_map google_compute_url_map.web default_service routes to backend_service google_compute_backend_service.web","on_critical_path":true,"group":null,"percentiles":{},"label":"google_compute_url_map.web → google_compute_backend_service.web"},{"src":"google_compute_backend_service.web","dst":"google_compute_region_network_endpoint_group.web","latency_ms":0.0,"breakdown":{"distance":0.0,"processing":0.0},"evidence":"backend_service google_compute_backend_service.web backend.group routes to neg google_compute_region_network_endpoint_group.web","on_critical_path":true,"group":null,"percentiles":{},"label":"google_compute_backend_service.web → google_compute_region_network_endpoint_group.web"},{"src":"google_compute_region_network_endpoint_group.web","dst":"google_cloud_run_v2_service.web","latency_ms":106.0,"breakdown":{"distance":1.0,"processing":5.0,"cold_start":100.0},"evidence":"neg google_compute_region_network_endpoint_group.web cloud_run.service routes to cloud_run google_cloud_run_v2_service.web","on_critical_path":true,"group":null,"percentiles":{},"label":"google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web"},{"src":"google_cloud_run_v2_service.web","dst":"google_sql_database_instance.db","latency_ms":6.0,"breakdown":{"distance":1.0,"processing":5.0},"evidence":"google_cloud_run_v2_service.web template.containers env DB_INSTANCE references google_sql_database_instance.db.connection_name; gcp_iam_binding: google_project_iam_member.web_cloudsql_client grants roles/cloudsql.client to ${google_service_account.web.email} (the service account of google_cloud_run_v2_service.web) on google_sql_database_instance.db","on_critical_path":true,"group":null,"percentiles":{},"label":"google_cloud_run_v2_service.web → google_sql_database_instance.db"},{"src":"google_cloud_run_v2_service.web","dst":"google_sql_database_instance.db","latency_ms":6.0,"breakdown":{"distance":1.0,"processing":5.0},"evidence":"google_cloud_run_v2_service.web template.containers env DB_INSTANCE references google_sql_database_instance.db.connection_name; gcp_iam_binding: google_project_iam_member.web_cloudsql_client grants roles/cloudsql.client to ${google_service_account.web.email} (the service account of google_cloud_run_v2_service.web) on google_sql_database_instance.db; repeat call","on_critical_path":true,"group":null,"percentiles":{},"label":"google_cloud_run_v2_service.web → google_sql_database_instance.db"},{"src":"google_sql_database_instance.db","dst":"google_cloud_run_v2_service.web","latency_ms":0,"breakdown":{},"evidence":"response leg — network and processing already counted on the forward hop into gcp-web-web; respond=0 (processing.cloud_run.respond)","on_critical_path":true,"group":null,"percentiles":{},"label":"google_sql_database_instance.db → google_cloud_run_v2_service.web"}],"findings":{"per_hop":[{"analyzer":"per_hop","subject":"google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web","latency_ms":106.0,"share":0.6625,"detail":"neg google_compute_region_network_endpoint_group.web cloud_run.service routes to cloud_run google_cloud_run_v2_service.web","refs":["google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web"],"layer":null,"additive":true},{"analyzer":"per_hop","subject":"internet → google_compute_global_forwarding_rule.web","latency_ms":42.0,"share":0.2625,"detail":"forwarding_rule gcp-web-https is a public entry point","refs":["internet → google_compute_global_forwarding_rule.web"],"layer":null,"additive":true},{"analyzer":"per_hop","subject":"google_cloud_run_v2_service.web → google_sql_database_instance.db","latency_ms":6.0,"share":0.0375,"detail":"google_cloud_run_v2_service.web template.containers env DB_INSTANCE references google_sql_database_instance.db.connection_name; gcp_iam_binding: google_project_iam_member.web_cloudsql_client grants roles/cloudsql.client to ${google_service_account.web.email} (the service account of google_cloud_run_v2_service.web) on google_sql_database_instance.db","refs":["google_cloud_run_v2_service.web → google_sql_database_instance.db"],"layer":null,"additive":true},{"analyzer":"per_hop","subject":"google_cloud_run_v2_service.web → google_sql_database_instance.db","latency_ms":6.0,"share":0.0375,"detail":"google_cloud_run_v2_service.web template.containers env DB_INSTANCE references google_sql_database_instance.db.connection_name; gcp_iam_binding: google_project_iam_member.web_cloudsql_client grants roles/cloudsql.client to ${google_service_account.web.email} (the service account of google_cloud_run_v2_service.web) on google_sql_database_instance.db; repeat call","refs":["google_cloud_run_v2_service.web → google_sql_database_instance.db"],"layer":null,"additive":true},{"analyzer":"per_hop","subject":"google_compute_global_forwarding_rule.web → google_compute_target_https_proxy.web","latency_ms":0.0,"share":0.0,"detail":"forwarding_rule google_compute_global_forwarding_rule.web target routes to target_proxy google_compute_target_https_proxy.web","refs":["google_compute_global_forwarding_rule.web → google_compute_target_https_proxy.web"],"layer":null,"additive":true},{"analyzer":"per_hop","subject":"google_compute_target_https_proxy.web → google_compute_url_map.web","latency_ms":0.0,"share":0.0,"detail":"target_proxy google_compute_target_https_proxy.web url_map routes to url_map google_compute_url_map.web","refs":["google_compute_target_https_proxy.web → google_compute_url_map.web"],"layer":null,"additive":true},{"analyzer":"per_hop","subject":"google_compute_url_map.web → google_compute_backend_service.web","latency_ms":0.0,"share":0.0,"detail":"url_map google_compute_url_map.web default_service routes to backend_service google_compute_backend_service.web","refs":["google_compute_url_map.web → google_compute_backend_service.web"],"layer":null,"additive":true},{"analyzer":"per_hop","subject":"google_compute_backend_service.web → google_compute_region_network_endpoint_group.web","latency_ms":0.0,"share":0.0,"detail":"backend_service google_compute_backend_service.web backend.group routes to neg google_compute_region_network_endpoint_group.web","refs":["google_compute_backend_service.web → google_compute_region_network_endpoint_group.web"],"layer":null,"additive":true},{"analyzer":"per_hop","subject":"google_sql_database_instance.db → google_cloud_run_v2_service.web","latency_ms":0,"share":0.0,"detail":"response leg — network and processing already counted on the forward hop into gcp-web-web; respond=0 (processing.cloud_run.respond)","refs":["google_sql_database_instance.db → google_cloud_run_v2_service.web"],"layer":null,"additive":true}],"per_node":[{"analyzer":"per_node","subject":"google_cloud_run_v2_service.web","latency_ms":106.0,"share":0.6625,"detail":"2 call(s) into cloud_run — dominated by cold_start (service, 100 ms)","refs":["google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web","google_sql_database_instance.db → google_cloud_run_v2_service.web"],"layer":"A2","additive":true},{"analyzer":"per_node","subject":"google_compute_global_forwarding_rule.web","latency_ms":42.0,"share":0.2625,"detail":"1 call(s) into forwarding_rule — dominated by distance (distance, 40 ms)","refs":["internet → google_compute_global_forwarding_rule.web"],"layer":"A1","additive":true},{"analyzer":"per_node","subject":"google_sql_database_instance.db","latency_ms":12.0,"share":0.075,"detail":"2 call(s) into cloud_sql — dominated by processing (service, 10 ms)","refs":["google_cloud_run_v2_service.web → google_sql_database_instance.db","google_cloud_run_v2_service.web → google_sql_database_instance.db"],"layer":"A2","additive":true},{"analyzer":"per_node","subject":"google_compute_target_https_proxy.web","latency_ms":0.0,"share":0.0,"detail":"1 call(s) into target_proxy — dominated by distance (distance, 0 ms)","refs":["google_compute_global_forwarding_rule.web → google_compute_target_https_proxy.web"],"layer":"A1","additive":true},{"analyzer":"per_node","subject":"google_compute_url_map.web","latency_ms":0.0,"share":0.0,"detail":"1 call(s) into url_map — dominated by distance (distance, 0 ms)","refs":["google_compute_target_https_proxy.web → google_compute_url_map.web"],"layer":"A1","additive":true},{"analyzer":"per_node","subject":"google_compute_backend_service.web","latency_ms":0.0,"share":0.0,"detail":"1 call(s) into backend_service — dominated by distance (distance, 0 ms)","refs":["google_compute_url_map.web → google_compute_backend_service.web"],"layer":"A1","additive":true},{"analyzer":"per_node","subject":"google_compute_region_network_endpoint_group.web","latency_ms":0.0,"share":0.0,"detail":"1 call(s) into neg — dominated by distance (distance, 0 ms)","refs":["google_compute_backend_service.web → google_compute_region_network_endpoint_group.web"],"layer":"A1","additive":true}],"per_category":[{"analyzer":"per_category","subject":"cold_start","latency_ms":100.0,"share":0.625,"detail":"expected cold-start cost across 1 Cloud Run invocation(s) (gcp-web-web)","refs":["google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web"],"layer":"A2","additive":true},{"analyzer":"per_category","subject":"distance","latency_ms":43.0,"share":0.26875,"detail":"1 internet → edge hop (fixed cost of being reachable); 7 same-region hop(s) (AZ spans)","refs":["internet → google_compute_global_forwarding_rule.web","google_compute_global_forwarding_rule.web → google_compute_target_https_proxy.web","google_compute_target_https_proxy.web → google_compute_url_map.web","google_compute_url_map.web → google_compute_backend_service.web","google_compute_backend_service.web → google_compute_region_network_endpoint_group.web","google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web","google_cloud_run_v2_service.web → google_sql_database_instance.db","google_cloud_run_v2_service.web → google_sql_database_instance.db"],"layer":"A1","additive":true},{"analyzer":"per_category","subject":"processing","latency_ms":17.0,"share":0.10625,"detail":"time inside services: cloud_sql 10 ms, cloud_run 5 ms, forwarding_rule 2 ms","refs":["internet → google_compute_global_forwarding_rule.web","google_compute_global_forwarding_rule.web → google_compute_target_https_proxy.web","google_compute_target_https_proxy.web → google_compute_url_map.web","google_compute_url_map.web → google_compute_backend_service.web","google_compute_backend_service.web → google_compute_region_network_endpoint_group.web","google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web","google_cloud_run_v2_service.web → google_sql_database_instance.db","google_cloud_run_v2_service.web → google_sql_database_instance.db"],"layer":"A2","additive":true},{"analyzer":"per_category","subject":"service","latency_ms":117.0,"share":0.73125,"detail":"processing + cold_start + transition (roll-up of the A2 lines above)","refs":[],"layer":"A2","additive":false},{"analyzer":"per_category","subject":"hops","latency_ms":9.0,"share":0.0,"detail":"8 sequential hop(s); each is a round-trip that adds distance and processing","refs":[],"layer":"A3","additive":false}],"recommendations":[{"analyzer":"recommendations","subject":"a minimum instance count on gcp-web-web","latency_ms":100.0,"share":0.625,"detail":"expected cold-start cost is 62% of the total across 1 Cloud Run invocation(s); a minimum instance count (min_instances) keeps a warm instance and removes it. Based on: gcp-web-neg → gcp-web-web (106 ms)","refs":["google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web"],"layer":null,"additive":true},{"analyzer":"recommendations","subject":"batch the 2 calls from gcp-web-web to gcp-web-db","latency_ms":6.0,"share":0.0375,"detail":"2 consecutive round-trips to the same cloud_sql at ~6 ms each; one batched query (BatchGetItem / a JOIN / a single transaction) pays the trip once. Based on: gcp-web-web → gcp-web-db (6 ms); gcp-web-web → gcp-web-db (6 ms)","refs":["google_cloud_run_v2_service.web → google_sql_database_instance.db","google_cloud_run_v2_service.web → google_sql_database_instance.db"],"layer":null,"additive":true}]},"warnings":[],"load":{}},{"name":"cached_page","description":"GET /products with a warm cache — one Redis read, no database","source":"declared","total_ms":149.5,"percentiles":{},"samples":null,"shape":{"sequential_hops":7,"parallel_groups":0,"fanout_copies":0,"fanout_waves":0,"wait_ms":0.0,"hop_count":8,"parallel_savings_ms":0.0},"profile":{"sources":["defaults"]},"hops":[{"src":"internet","dst":"google_compute_global_forwarding_rule.web","latency_ms":42.0,"breakdown":{"distance":40.0,"processing":2.0},"evidence":"forwarding_rule gcp-web-https is a public entry point","on_critical_path":true,"group":null,"percentiles":{},"label":"internet → google_compute_global_forwarding_rule.web"},{"src":"google_compute_global_forwarding_rule.web","dst":"google_compute_target_https_proxy.web","latency_ms":0.0,"breakdown":{"distance":0.0,"processing":0.0},"evidence":"forwarding_rule google_compute_global_forwarding_rule.web target routes to target_proxy google_compute_target_https_proxy.web","on_critical_path":true,"group":null,"percentiles":{},"label":"google_compute_global_forwarding_rule.web → google_compute_target_https_proxy.web"},{"src":"google_compute_target_https_proxy.web","dst":"google_compute_url_map.web","latency_ms":0.0,"breakdown":{"distance":0.0,"processing":0.0},"evidence":"target_proxy google_compute_target_https_proxy.web url_map routes to url_map google_compute_url_map.web","on_critical_path":true,"group":null,"percentiles":{},"label":"google_compute_target_https_proxy.web → google_compute_url_map.web"},{"src":"google_compute_url_map.web","dst":"google_compute_backend_service.web","latency_ms":0.0,"breakdown":{"distance":0.0,"processing":0.0},"evidence":"url_map google_compute_url_map.web default_service routes to backend_service google_compute_backend_service.web","on_critical_path":true,"group":null,"percentiles":{},"label":"google_compute_url_map.web → google_compute_backend_service.web"},{"src":"google_compute_backend_service.web","dst":"google_compute_region_network_endpoint_group.web","latency_ms":0.0,"breakdown":{"distance":0.0,"processing":0.0},"evidence":"backend_service google_compute_backend_service.web backend.group routes to neg google_compute_region_network_endpoint_group.web","on_critical_path":true,"group":null,"percentiles":{},"label":"google_compute_backend_service.web → google_compute_region_network_endpoint_group.web"},{"src":"google_compute_region_network_endpoint_group.web","dst":"google_cloud_run_v2_service.web","latency_ms":106.0,"breakdown":{"distance":1.0,"processing":5.0,"cold_start":100.0},"evidence":"neg google_compute_region_network_endpoint_group.web cloud_run.service routes to cloud_run google_cloud_run_v2_service.web","on_critical_path":true,"group":null,"percentiles":{},"label":"google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web"},{"src":"google_cloud_run_v2_service.web","dst":"google_redis_instance.cache","latency_ms":1.5,"breakdown":{"distance":1.0,"processing":0.5},"evidence":"google_cloud_run_v2_service.web template.containers env REDIS_HOST references google_redis_instance.cache.host","on_critical_path":true,"group":null,"percentiles":{},"label":"google_cloud_run_v2_service.web → google_redis_instance.cache"},{"src":"google_redis_instance.cache","dst":"google_cloud_run_v2_service.web","latency_ms":0,"breakdown":{},"evidence":"response leg — network and processing already counted on the forward hop into gcp-web-web; respond=0 (processing.cloud_run.respond)","on_critical_path":true,"group":null,"percentiles":{},"label":"google_redis_instance.cache → google_cloud_run_v2_service.web"}],"findings":{"per_hop":[{"analyzer":"per_hop","subject":"google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web","latency_ms":106.0,"share":0.7090301003344481,"detail":"neg google_compute_region_network_endpoint_group.web cloud_run.service routes to cloud_run google_cloud_run_v2_service.web","refs":["google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web"],"layer":null,"additive":true},{"analyzer":"per_hop","subject":"internet → google_compute_global_forwarding_rule.web","latency_ms":42.0,"share":0.2809364548494983,"detail":"forwarding_rule gcp-web-https is a public entry point","refs":["internet → google_compute_global_forwarding_rule.web"],"layer":null,"additive":true},{"analyzer":"per_hop","subject":"google_cloud_run_v2_service.web → google_redis_instance.cache","latency_ms":1.5,"share":0.010033444816053512,"detail":"google_cloud_run_v2_service.web template.containers env REDIS_HOST references google_redis_instance.cache.host","refs":["google_cloud_run_v2_service.web → google_redis_instance.cache"],"layer":null,"additive":true},{"analyzer":"per_hop","subject":"google_compute_global_forwarding_rule.web → google_compute_target_https_proxy.web","latency_ms":0.0,"share":0.0,"detail":"forwarding_rule google_compute_global_forwarding_rule.web target routes to target_proxy google_compute_target_https_proxy.web","refs":["google_compute_global_forwarding_rule.web → google_compute_target_https_proxy.web"],"layer":null,"additive":true},{"analyzer":"per_hop","subject":"google_compute_target_https_proxy.web → google_compute_url_map.web","latency_ms":0.0,"share":0.0,"detail":"target_proxy google_compute_target_https_proxy.web url_map routes to url_map google_compute_url_map.web","refs":["google_compute_target_https_proxy.web → google_compute_url_map.web"],"layer":null,"additive":true},{"analyzer":"per_hop","subject":"google_compute_url_map.web → google_compute_backend_service.web","latency_ms":0.0,"share":0.0,"detail":"url_map google_compute_url_map.web default_service routes to backend_service google_compute_backend_service.web","refs":["google_compute_url_map.web → google_compute_backend_service.web"],"layer":null,"additive":true},{"analyzer":"per_hop","subject":"google_compute_backend_service.web → google_compute_region_network_endpoint_group.web","latency_ms":0.0,"share":0.0,"detail":"backend_service google_compute_backend_service.web backend.group routes to neg google_compute_region_network_endpoint_group.web","refs":["google_compute_backend_service.web → google_compute_region_network_endpoint_group.web"],"layer":null,"additive":true},{"analyzer":"per_hop","subject":"google_redis_instance.cache → google_cloud_run_v2_service.web","latency_ms":0,"share":0.0,"detail":"response leg — network and processing already counted on the forward hop into gcp-web-web; respond=0 (processing.cloud_run.respond)","refs":["google_redis_instance.cache → google_cloud_run_v2_service.web"],"layer":null,"additive":true}],"per_node":[{"analyzer":"per_node","subject":"google_cloud_run_v2_service.web","latency_ms":106.0,"share":0.7090301003344481,"detail":"2 call(s) into cloud_run — dominated by cold_start (service, 100 ms)","refs":["google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web","google_redis_instance.cache → google_cloud_run_v2_service.web"],"layer":"A2","additive":true},{"analyzer":"per_node","subject":"google_compute_global_forwarding_rule.web","latency_ms":42.0,"share":0.2809364548494983,"detail":"1 call(s) into forwarding_rule — dominated by distance (distance, 40 ms)","refs":["internet → google_compute_global_forwarding_rule.web"],"layer":"A1","additive":true},{"analyzer":"per_node","subject":"google_redis_instance.cache","latency_ms":1.5,"share":0.010033444816053512,"detail":"1 call(s) into memorystore — dominated by distance (distance, 1 ms)","refs":["google_cloud_run_v2_service.web → google_redis_instance.cache"],"layer":"A1","additive":true},{"analyzer":"per_node","subject":"google_compute_target_https_proxy.web","latency_ms":0.0,"share":0.0,"detail":"1 call(s) into target_proxy — dominated by distance (distance, 0 ms)","refs":["google_compute_global_forwarding_rule.web → google_compute_target_https_proxy.web"],"layer":"A1","additive":true},{"analyzer":"per_node","subject":"google_compute_url_map.web","latency_ms":0.0,"share":0.0,"detail":"1 call(s) into url_map — dominated by distance (distance, 0 ms)","refs":["google_compute_target_https_proxy.web → google_compute_url_map.web"],"layer":"A1","additive":true},{"analyzer":"per_node","subject":"google_compute_backend_service.web","latency_ms":0.0,"share":0.0,"detail":"1 call(s) into backend_service — dominated by distance (distance, 0 ms)","refs":["google_compute_url_map.web → google_compute_backend_service.web"],"layer":"A1","additive":true},{"analyzer":"per_node","subject":"google_compute_region_network_endpoint_group.web","latency_ms":0.0,"share":0.0,"detail":"1 call(s) into neg — dominated by distance (distance, 0 ms)","refs":["google_compute_backend_service.web → google_compute_region_network_endpoint_group.web"],"layer":"A1","additive":true}],"per_category":[{"analyzer":"per_category","subject":"cold_start","latency_ms":100.0,"share":0.6688963210702341,"detail":"expected cold-start cost across 1 Cloud Run invocation(s) (gcp-web-web)","refs":["google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web"],"layer":"A2","additive":true},{"analyzer":"per_category","subject":"distance","latency_ms":42.0,"share":0.2809364548494983,"detail":"1 internet → edge hop (fixed cost of being reachable); 6 same-region hop(s) (AZ spans)","refs":["internet → google_compute_global_forwarding_rule.web","google_compute_global_forwarding_rule.web → google_compute_target_https_proxy.web","google_compute_target_https_proxy.web → google_compute_url_map.web","google_compute_url_map.web → google_compute_backend_service.web","google_compute_backend_service.web → google_compute_region_network_endpoint_group.web","google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web","google_cloud_run_v2_service.web → google_redis_instance.cache"],"layer":"A1","additive":true},{"analyzer":"per_category","subject":"processing","latency_ms":7.5,"share":0.05016722408026756,"detail":"time inside services: cloud_run 5 ms, forwarding_rule 2 ms, memorystore 0 ms","refs":["internet → google_compute_global_forwarding_rule.web","google_compute_global_forwarding_rule.web → google_compute_target_https_proxy.web","google_compute_target_https_proxy.web → google_compute_url_map.web","google_compute_url_map.web → google_compute_backend_service.web","google_compute_backend_service.web → google_compute_region_network_endpoint_group.web","google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web","google_cloud_run_v2_service.web → google_redis_instance.cache"],"layer":"A2","additive":true},{"analyzer":"per_category","subject":"service","latency_ms":107.5,"share":0.7190635451505016,"detail":"processing + cold_start + transition (roll-up of the A2 lines above)","refs":[],"layer":"A2","additive":false},{"analyzer":"per_category","subject":"hops","latency_ms":8.0,"share":0.0,"detail":"7 sequential hop(s); each is a round-trip that adds distance and processing","refs":[],"layer":"A3","additive":false}],"recommendations":[{"analyzer":"recommendations","subject":"a minimum instance count on gcp-web-web","latency_ms":100.0,"share":0.6688963210702341,"detail":"expected cold-start cost is 67% of the total across 1 Cloud Run invocation(s); a minimum instance count (min_instances) keeps a warm instance and removes it. Based on: gcp-web-neg → gcp-web-web (106 ms)","refs":["google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web"],"layer":null,"additive":true}]},"warnings":[],"load":{}},{"name":"gcp-web-https/gcp-web-db","description":"inferred: gcp-web-https → google_compute_target_https_proxy.web → google_compute_url_map.web → gcp-web-backend → gcp-web-neg → gcp-web-web → gcp-web-db","source":"inferred","total_ms":154.0,"percentiles":{},"samples":null,"shape":{"sequential_hops":6,"parallel_groups":0,"fanout_copies":0,"fanout_waves":0,"wait_ms":0.0,"hop_count":7,"parallel_savings_ms":0.0},"profile":{"sources":["defaults"]},"hops":[{"src":"internet","dst":"google_compute_global_forwarding_rule.web","latency_ms":42.0,"breakdown":{"distance":40.0,"processing":2.0},"evidence":"forwarding_rule gcp-web-https is a public entry point","on_critical_path":true,"group":null,"percentiles":{},"label":"internet → google_compute_global_forwarding_rule.web"},{"src":"google_compute_global_forwarding_rule.web","dst":"google_compute_target_https_proxy.web","latency_ms":0.0,"breakdown":{"distance":0.0,"processing":0.0},"evidence":"forwarding_rule google_compute_global_forwarding_rule.web target routes to target_proxy google_compute_target_https_proxy.web","on_critical_path":true,"group":null,"percentiles":{},"label":"google_compute_global_forwarding_rule.web → google_compute_target_https_proxy.web"},{"src":"google_compute_target_https_proxy.web","dst":"google_compute_url_map.web","latency_ms":0.0,"breakdown":{"distance":0.0,"processing":0.0},"evidence":"target_proxy google_compute_target_https_proxy.web url_map routes to url_map google_compute_url_map.web","on_critical_path":true,"group":null,"percentiles":{},"label":"google_compute_target_https_proxy.web → google_compute_url_map.web"},{"src":"google_compute_url_map.web","dst":"google_compute_backend_service.web","latency_ms":0.0,"breakdown":{"distance":0.0,"processing":0.0},"evidence":"url_map google_compute_url_map.web default_service routes to backend_service google_compute_backend_service.web","on_critical_path":true,"group":null,"percentiles":{},"label":"google_compute_url_map.web → google_compute_backend_service.web"},{"src":"google_compute_backend_service.web","dst":"google_compute_region_network_endpoint_group.web","latency_ms":0.0,"breakdown":{"distance":0.0,"processing":0.0},"evidence":"backend_service google_compute_backend_service.web backend.group routes to neg google_compute_region_network_endpoint_group.web","on_critical_path":true,"group":null,"percentiles":{},"label":"google_compute_backend_service.web → google_compute_region_network_endpoint_group.web"},{"src":"google_compute_region_network_endpoint_group.web","dst":"google_cloud_run_v2_service.web","latency_ms":106.0,"breakdown":{"distance":1.0,"processing":5.0,"cold_start":100.0},"evidence":"neg google_compute_region_network_endpoint_group.web cloud_run.service routes to cloud_run google_cloud_run_v2_service.web","on_critical_path":true,"group":null,"percentiles":{},"label":"google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web"},{"src":"google_cloud_run_v2_service.web","dst":"google_sql_database_instance.db","latency_ms":6.0,"breakdown":{"distance":1.0,"processing":5.0},"evidence":"google_cloud_run_v2_service.web template.containers env DB_INSTANCE references google_sql_database_instance.db.connection_name; gcp_iam_binding: google_project_iam_member.web_cloudsql_client grants roles/cloudsql.client to ${google_service_account.web.email} (the service account of google_cloud_run_v2_service.web) on google_sql_database_instance.db","on_critical_path":true,"group":null,"percentiles":{},"label":"google_cloud_run_v2_service.web → google_sql_database_instance.db"}],"findings":{"per_hop":[{"analyzer":"per_hop","subject":"google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web","latency_ms":106.0,"share":0.6883116883116883,"detail":"neg google_compute_region_network_endpoint_group.web cloud_run.service routes to cloud_run google_cloud_run_v2_service.web","refs":["google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web"],"layer":null,"additive":true},{"analyzer":"per_hop","subject":"internet → google_compute_global_forwarding_rule.web","latency_ms":42.0,"share":0.2727272727272727,"detail":"forwarding_rule gcp-web-https is a public entry point","refs":["internet → google_compute_global_forwarding_rule.web"],"layer":null,"additive":true},{"analyzer":"per_hop","subject":"google_cloud_run_v2_service.web → google_sql_database_instance.db","latency_ms":6.0,"share":0.03896103896103896,"detail":"google_cloud_run_v2_service.web template.containers env DB_INSTANCE references google_sql_database_instance.db.connection_name; gcp_iam_binding: google_project_iam_member.web_cloudsql_client grants roles/cloudsql.client to ${google_service_account.web.email} (the service account of google_cloud_run_v2_service.web) on google_sql_database_instance.db","refs":["google_cloud_run_v2_service.web → google_sql_database_instance.db"],"layer":null,"additive":true},{"analyzer":"per_hop","subject":"google_compute_global_forwarding_rule.web → google_compute_target_https_proxy.web","latency_ms":0.0,"share":0.0,"detail":"forwarding_rule google_compute_global_forwarding_rule.web target routes to target_proxy google_compute_target_https_proxy.web","refs":["google_compute_global_forwarding_rule.web → google_compute_target_https_proxy.web"],"layer":null,"additive":true},{"analyzer":"per_hop","subject":"google_compute_target_https_proxy.web → google_compute_url_map.web","latency_ms":0.0,"share":0.0,"detail":"target_proxy google_compute_target_https_proxy.web url_map routes to url_map google_compute_url_map.web","refs":["google_compute_target_https_proxy.web → google_compute_url_map.web"],"layer":null,"additive":true},{"analyzer":"per_hop","subject":"google_compute_url_map.web → google_compute_backend_service.web","latency_ms":0.0,"share":0.0,"detail":"url_map google_compute_url_map.web default_service routes to backend_service google_compute_backend_service.web","refs":["google_compute_url_map.web → google_compute_backend_service.web"],"layer":null,"additive":true},{"analyzer":"per_hop","subject":"google_compute_backend_service.web → google_compute_region_network_endpoint_group.web","latency_ms":0.0,"share":0.0,"detail":"backend_service google_compute_backend_service.web backend.group routes to neg google_compute_region_network_endpoint_group.web","refs":["google_compute_backend_service.web → google_compute_region_network_endpoint_group.web"],"layer":null,"additive":true}],"per_node":[{"analyzer":"per_node","subject":"google_cloud_run_v2_service.web","latency_ms":106.0,"share":0.6883116883116883,"detail":"1 call(s) into cloud_run — dominated by cold_start (service, 100 ms)","refs":["google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web"],"layer":"A2","additive":true},{"analyzer":"per_node","subject":"google_compute_global_forwarding_rule.web","latency_ms":42.0,"share":0.2727272727272727,"detail":"1 call(s) into forwarding_rule — dominated by distance (distance, 40 ms)","refs":["internet → google_compute_global_forwarding_rule.web"],"layer":"A1","additive":true},{"analyzer":"per_node","subject":"google_sql_database_instance.db","latency_ms":6.0,"share":0.03896103896103896,"detail":"1 call(s) into cloud_sql — dominated by processing (service, 5 ms)","refs":["google_cloud_run_v2_service.web → google_sql_database_instance.db"],"layer":"A2","additive":true},{"analyzer":"per_node","subject":"google_compute_target_https_proxy.web","latency_ms":0.0,"share":0.0,"detail":"1 call(s) into target_proxy — dominated by distance (distance, 0 ms)","refs":["google_compute_global_forwarding_rule.web → google_compute_target_https_proxy.web"],"layer":"A1","additive":true},{"analyzer":"per_node","subject":"google_compute_url_map.web","latency_ms":0.0,"share":0.0,"detail":"1 call(s) into url_map — dominated by distance (distance, 0 ms)","refs":["google_compute_target_https_proxy.web → google_compute_url_map.web"],"layer":"A1","additive":true},{"analyzer":"per_node","subject":"google_compute_backend_service.web","latency_ms":0.0,"share":0.0,"detail":"1 call(s) into backend_service — dominated by distance (distance, 0 ms)","refs":["google_compute_url_map.web → google_compute_backend_service.web"],"layer":"A1","additive":true},{"analyzer":"per_node","subject":"google_compute_region_network_endpoint_group.web","latency_ms":0.0,"share":0.0,"detail":"1 call(s) into neg — dominated by distance (distance, 0 ms)","refs":["google_compute_backend_service.web → google_compute_region_network_endpoint_group.web"],"layer":"A1","additive":true}],"per_category":[{"analyzer":"per_category","subject":"cold_start","latency_ms":100.0,"share":0.6493506493506493,"detail":"expected cold-start cost across 1 Cloud Run invocation(s) (gcp-web-web)","refs":["google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web"],"layer":"A2","additive":true},{"analyzer":"per_category","subject":"distance","latency_ms":42.0,"share":0.2727272727272727,"detail":"1 internet → edge hop (fixed cost of being reachable); 6 same-region hop(s) (AZ spans)","refs":["internet → google_compute_global_forwarding_rule.web","google_compute_global_forwarding_rule.web → google_compute_target_https_proxy.web","google_compute_target_https_proxy.web → google_compute_url_map.web","google_compute_url_map.web → google_compute_backend_service.web","google_compute_backend_service.web → google_compute_region_network_endpoint_group.web","google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web","google_cloud_run_v2_service.web → google_sql_database_instance.db"],"layer":"A1","additive":true},{"analyzer":"per_category","subject":"processing","latency_ms":12.0,"share":0.07792207792207792,"detail":"time inside services: cloud_run 5 ms, cloud_sql 5 ms, forwarding_rule 2 ms","refs":["internet → google_compute_global_forwarding_rule.web","google_compute_global_forwarding_rule.web → google_compute_target_https_proxy.web","google_compute_target_https_proxy.web → google_compute_url_map.web","google_compute_url_map.web → google_compute_backend_service.web","google_compute_backend_service.web → google_compute_region_network_endpoint_group.web","google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web","google_cloud_run_v2_service.web → google_sql_database_instance.db"],"layer":"A2","additive":true},{"analyzer":"per_category","subject":"service","latency_ms":112.0,"share":0.7272727272727273,"detail":"processing + cold_start + transition (roll-up of the A2 lines above)","refs":[],"layer":"A2","additive":false},{"analyzer":"per_category","subject":"hops","latency_ms":7.0,"share":0.0,"detail":"6 sequential hop(s); each is a round-trip that adds distance and processing","refs":[],"layer":"A3","additive":false}],"recommendations":[{"analyzer":"recommendations","subject":"a minimum instance count on gcp-web-web","latency_ms":100.0,"share":0.6493506493506493,"detail":"expected cold-start cost is 65% of the total across 1 Cloud Run invocation(s); a minimum instance count (min_instances) keeps a warm instance and removes it. Based on: gcp-web-neg → gcp-web-web (106 ms)","refs":["google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web"],"layer":null,"additive":true}]},"warnings":[],"load":{}},{"name":"gcp-web-https/gcp-web-cache","description":"inferred: gcp-web-https → google_compute_target_https_proxy.web → google_compute_url_map.web → gcp-web-backend → gcp-web-neg → gcp-web-web → gcp-web-cache","source":"inferred","total_ms":149.5,"percentiles":{},"samples":null,"shape":{"sequential_hops":6,"parallel_groups":0,"fanout_copies":0,"fanout_waves":0,"wait_ms":0.0,"hop_count":7,"parallel_savings_ms":0.0},"profile":{"sources":["defaults"]},"hops":[{"src":"internet","dst":"google_compute_global_forwarding_rule.web","latency_ms":42.0,"breakdown":{"distance":40.0,"processing":2.0},"evidence":"forwarding_rule gcp-web-https is a public entry point","on_critical_path":true,"group":null,"percentiles":{},"label":"internet → google_compute_global_forwarding_rule.web"},{"src":"google_compute_global_forwarding_rule.web","dst":"google_compute_target_https_proxy.web","latency_ms":0.0,"breakdown":{"distance":0.0,"processing":0.0},"evidence":"forwarding_rule google_compute_global_forwarding_rule.web target routes to target_proxy google_compute_target_https_proxy.web","on_critical_path":true,"group":null,"percentiles":{},"label":"google_compute_global_forwarding_rule.web → google_compute_target_https_proxy.web"},{"src":"google_compute_target_https_proxy.web","dst":"google_compute_url_map.web","latency_ms":0.0,"breakdown":{"distance":0.0,"processing":0.0},"evidence":"target_proxy google_compute_target_https_proxy.web url_map routes to url_map google_compute_url_map.web","on_critical_path":true,"group":null,"percentiles":{},"label":"google_compute_target_https_proxy.web → google_compute_url_map.web"},{"src":"google_compute_url_map.web","dst":"google_compute_backend_service.web","latency_ms":0.0,"breakdown":{"distance":0.0,"processing":0.0},"evidence":"url_map google_compute_url_map.web default_service routes to backend_service google_compute_backend_service.web","on_critical_path":true,"group":null,"percentiles":{},"label":"google_compute_url_map.web → google_compute_backend_service.web"},{"src":"google_compute_backend_service.web","dst":"google_compute_region_network_endpoint_group.web","latency_ms":0.0,"breakdown":{"distance":0.0,"processing":0.0},"evidence":"backend_service google_compute_backend_service.web backend.group routes to neg google_compute_region_network_endpoint_group.web","on_critical_path":true,"group":null,"percentiles":{},"label":"google_compute_backend_service.web → google_compute_region_network_endpoint_group.web"},{"src":"google_compute_region_network_endpoint_group.web","dst":"google_cloud_run_v2_service.web","latency_ms":106.0,"breakdown":{"distance":1.0,"processing":5.0,"cold_start":100.0},"evidence":"neg google_compute_region_network_endpoint_group.web cloud_run.service routes to cloud_run google_cloud_run_v2_service.web","on_critical_path":true,"group":null,"percentiles":{},"label":"google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web"},{"src":"google_cloud_run_v2_service.web","dst":"google_redis_instance.cache","latency_ms":1.5,"breakdown":{"distance":1.0,"processing":0.5},"evidence":"google_cloud_run_v2_service.web template.containers env REDIS_HOST references google_redis_instance.cache.host","on_critical_path":true,"group":null,"percentiles":{},"label":"google_cloud_run_v2_service.web → google_redis_instance.cache"}],"findings":{"per_hop":[{"analyzer":"per_hop","subject":"google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web","latency_ms":106.0,"share":0.7090301003344481,"detail":"neg google_compute_region_network_endpoint_group.web cloud_run.service routes to cloud_run google_cloud_run_v2_service.web","refs":["google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web"],"layer":null,"additive":true},{"analyzer":"per_hop","subject":"internet → google_compute_global_forwarding_rule.web","latency_ms":42.0,"share":0.2809364548494983,"detail":"forwarding_rule gcp-web-https is a public entry point","refs":["internet → google_compute_global_forwarding_rule.web"],"layer":null,"additive":true},{"analyzer":"per_hop","subject":"google_cloud_run_v2_service.web → google_redis_instance.cache","latency_ms":1.5,"share":0.010033444816053512,"detail":"google_cloud_run_v2_service.web template.containers env REDIS_HOST references google_redis_instance.cache.host","refs":["google_cloud_run_v2_service.web → google_redis_instance.cache"],"layer":null,"additive":true},{"analyzer":"per_hop","subject":"google_compute_global_forwarding_rule.web → google_compute_target_https_proxy.web","latency_ms":0.0,"share":0.0,"detail":"forwarding_rule google_compute_global_forwarding_rule.web target routes to target_proxy google_compute_target_https_proxy.web","refs":["google_compute_global_forwarding_rule.web → google_compute_target_https_proxy.web"],"layer":null,"additive":true},{"analyzer":"per_hop","subject":"google_compute_target_https_proxy.web → google_compute_url_map.web","latency_ms":0.0,"share":0.0,"detail":"target_proxy google_compute_target_https_proxy.web url_map routes to url_map google_compute_url_map.web","refs":["google_compute_target_https_proxy.web → google_compute_url_map.web"],"layer":null,"additive":true},{"analyzer":"per_hop","subject":"google_compute_url_map.web → google_compute_backend_service.web","latency_ms":0.0,"share":0.0,"detail":"url_map google_compute_url_map.web default_service routes to backend_service google_compute_backend_service.web","refs":["google_compute_url_map.web → google_compute_backend_service.web"],"layer":null,"additive":true},{"analyzer":"per_hop","subject":"google_compute_backend_service.web → google_compute_region_network_endpoint_group.web","latency_ms":0.0,"share":0.0,"detail":"backend_service google_compute_backend_service.web backend.group routes to neg google_compute_region_network_endpoint_group.web","refs":["google_compute_backend_service.web → google_compute_region_network_endpoint_group.web"],"layer":null,"additive":true}],"per_node":[{"analyzer":"per_node","subject":"google_cloud_run_v2_service.web","latency_ms":106.0,"share":0.7090301003344481,"detail":"1 call(s) into cloud_run — dominated by cold_start (service, 100 ms)","refs":["google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web"],"layer":"A2","additive":true},{"analyzer":"per_node","subject":"google_compute_global_forwarding_rule.web","latency_ms":42.0,"share":0.2809364548494983,"detail":"1 call(s) into forwarding_rule — dominated by distance (distance, 40 ms)","refs":["internet → google_compute_global_forwarding_rule.web"],"layer":"A1","additive":true},{"analyzer":"per_node","subject":"google_redis_instance.cache","latency_ms":1.5,"share":0.010033444816053512,"detail":"1 call(s) into memorystore — dominated by distance (distance, 1 ms)","refs":["google_cloud_run_v2_service.web → google_redis_instance.cache"],"layer":"A1","additive":true},{"analyzer":"per_node","subject":"google_compute_target_https_proxy.web","latency_ms":0.0,"share":0.0,"detail":"1 call(s) into target_proxy — dominated by distance (distance, 0 ms)","refs":["google_compute_global_forwarding_rule.web → google_compute_target_https_proxy.web"],"layer":"A1","additive":true},{"analyzer":"per_node","subject":"google_compute_url_map.web","latency_ms":0.0,"share":0.0,"detail":"1 call(s) into url_map — dominated by distance (distance, 0 ms)","refs":["google_compute_target_https_proxy.web → google_compute_url_map.web"],"layer":"A1","additive":true},{"analyzer":"per_node","subject":"google_compute_backend_service.web","latency_ms":0.0,"share":0.0,"detail":"1 call(s) into backend_service — dominated by distance (distance, 0 ms)","refs":["google_compute_url_map.web → google_compute_backend_service.web"],"layer":"A1","additive":true},{"analyzer":"per_node","subject":"google_compute_region_network_endpoint_group.web","latency_ms":0.0,"share":0.0,"detail":"1 call(s) into neg — dominated by distance (distance, 0 ms)","refs":["google_compute_backend_service.web → google_compute_region_network_endpoint_group.web"],"layer":"A1","additive":true}],"per_category":[{"analyzer":"per_category","subject":"cold_start","latency_ms":100.0,"share":0.6688963210702341,"detail":"expected cold-start cost across 1 Cloud Run invocation(s) (gcp-web-web)","refs":["google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web"],"layer":"A2","additive":true},{"analyzer":"per_category","subject":"distance","latency_ms":42.0,"share":0.2809364548494983,"detail":"1 internet → edge hop (fixed cost of being reachable); 6 same-region hop(s) (AZ spans)","refs":["internet → google_compute_global_forwarding_rule.web","google_compute_global_forwarding_rule.web → google_compute_target_https_proxy.web","google_compute_target_https_proxy.web → google_compute_url_map.web","google_compute_url_map.web → google_compute_backend_service.web","google_compute_backend_service.web → google_compute_region_network_endpoint_group.web","google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web","google_cloud_run_v2_service.web → google_redis_instance.cache"],"layer":"A1","additive":true},{"analyzer":"per_category","subject":"processing","latency_ms":7.5,"share":0.05016722408026756,"detail":"time inside services: cloud_run 5 ms, forwarding_rule 2 ms, memorystore 0 ms","refs":["internet → google_compute_global_forwarding_rule.web","google_compute_global_forwarding_rule.web → google_compute_target_https_proxy.web","google_compute_target_https_proxy.web → google_compute_url_map.web","google_compute_url_map.web → google_compute_backend_service.web","google_compute_backend_service.web → google_compute_region_network_endpoint_group.web","google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web","google_cloud_run_v2_service.web → google_redis_instance.cache"],"layer":"A2","additive":true},{"analyzer":"per_category","subject":"service","latency_ms":107.5,"share":0.7190635451505016,"detail":"processing + cold_start + transition (roll-up of the A2 lines above)","refs":[],"layer":"A2","additive":false},{"analyzer":"per_category","subject":"hops","latency_ms":7.0,"share":0.0,"detail":"6 sequential hop(s); each is a round-trip that adds distance and processing","refs":[],"layer":"A3","additive":false}],"recommendations":[{"analyzer":"recommendations","subject":"a minimum instance count on gcp-web-web","latency_ms":100.0,"share":0.6688963210702341,"detail":"expected cold-start cost is 67% of the total across 1 Cloud Run invocation(s); a minimum instance count (min_instances) keeps a warm instance and removes it. Based on: gcp-web-neg → gcp-web-web (106 ms)","refs":["google_compute_region_network_endpoint_group.web → google_cloud_run_v2_service.web"],"layer":null,"additive":true}]},"warnings":[],"load":{}}],"capacity":{}}}</script>
+<script>
+(() => {
+  "use strict";
+  const KINDS = ["compute", "datastore", "lb", "gateway", "queue", "orchestrator", "cdn", "network", "external"];
+  const CATS = ["distance", "processing", "cold_start", "other"];
+  const svgNS = "http://www.w3.org/2000/svg";
+  const $ = (s) => document.querySelector(s);
+  const $$ = (s, root = document) => [...root.querySelectorAll(s)];
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  // ---------------------------------------------------------------- fmt
+  // en-GB, 1 dp — the same figures as the terminal's `{:,.1f}`.
+  const fmt = (() => {
+    const one = new Intl.NumberFormat("en-GB", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    const zero = new Intl.NumberFormat("en-GB", { maximumFractionDigits: 0 });
+    const n = (x) => one.format(Number(x) || 0);
+    return {
+      n,
+      n0: (x) => zero.format(Number(x) || 0),
+      ms: (x) => `${n(x)} ms`,
+      pct: (x) => `${Math.round((Number(x) || 0) * 100)} %`,
+      clip: (s, w) => (s.length > w ? s.slice(0, w - 1) + "…" : s),
+    };
+  })();
+
+  // ---------------------------------------------------------------- data
+  // The inlined blob, indexed once. Nothing here touches the DOM.
+  const data = {
+    blob: null, kind: null, options: {}, sections: [],
+    report: null, graph: null,
+    labelCounts: null,          // label → how many nodes carry it (display_name rule)
+    edgesByKey: new Map(),      // "src→dst" → [edge, …]
+    requestMap: new Set(),      // every key (and its reverse) any scenario's hop touches
+    scenarios: [],              // per scenario: {hops (indexed), byKey, nodes, slowest, maxMs, perNode}
+  };
+  const key = (src, dst) => `${src}→${dst}`;
+  const rev = (k) => k.split("→").reverse().join("→");
+
+  function parseBlob() {
+    const el = $("#iacsim-data");
+    try { return JSON.parse(el.textContent); } catch (e) { return null; }
+  }
+
+  function index(report) {
+    data.report = report; data.graph = report.graph;
+    data.labelCounts = {};
+    for (const n of Object.values(data.graph.nodes)) if (n.label) data.labelCounts[n.label] = (data.labelCounts[n.label] || 0) + 1;
+    data.edgesByKey = new Map();
+    for (const e of data.graph.edges) {
+      const k = key(e.src, e.dst);
+      if (!data.edgesByKey.has(k)) data.edgesByKey.set(k, []);
+      data.edgesByKey.get(k).push(e);
+    }
+    data.requestMap = new Set();
+    data.scenarios = report.scenarios.map(indexScenario);
+  }
+
+  function indexScenario(s) {
+    const hops = s.hops.map((h, i) => ({ ...h, index: i + 1, key: key(h.src, h.dst) }));
+    const byKey = new Map();         // drawn-edge key → {ms, breakdown, hops}
+    const nodes = new Set();
+    for (const h of hops) {
+      data.requestMap.add(h.key); data.requestMap.add(rev(h.key));
+      nodes.add(h.src); nodes.add(h.dst);
+      const k = drawnKey(h.key);
+      if (!byKey.has(k)) byKey.set(k, { ms: 0, breakdown: {}, hops: [], percentiles: [] });
+      const agg = byKey.get(k);
+      agg.ms += h.latency_ms; agg.hops.push(h);
+      for (const [c, v] of Object.entries(h.breakdown || {})) agg.breakdown[c] = (agg.breakdown[c] || 0) + v;
+      if (h.percentiles && h.percentiles.p99 !== undefined) agg.percentiles.push(h.percentiles);
+    }
+    const slowest = hops.reduce((best, h) => (!best || h.latency_ms > best.latency_ms ? h : best), null);
+    const perNode = {};
+    for (const f of (s.findings && s.findings.per_node) || []) perNode[f.subject] = f;
+    return { hops, byKey, nodes, slowest, maxMs: Math.max(1, ...[...byKey.values()].map((a) => a.ms)), perNode };
+  }
+
+  // A hop with no edge of its own (a 0 ms return leg) is drawn on the reverse edge.
+  function drawnKey(k) { return data.edgesByKey.has(k) || !data.edgesByKey.has(rev(k)) ? k : rev(k); }
+
+  // Port of InfraGraph.display_name: the label when unique, else the address with
+  // `module.` and the provider prefix of the resource type stripped.
+  const TYPE_PREFIX = /\.[a-z][a-z0-9]*_(?=[a-z0-9_]+\.[^.[]+(?:\[.*\])?$)/;
+  function displayName(id, graph = data.graph, counts = data.labelCounts) {
+    const n = graph && graph.nodes[id];
+    if (n && n.label && counts && counts[n.label] === 1) return n.label;
+    const short = id.replace(/module\./g, "").replace(TYPE_PREFIX, ".");
+    return short.endsWith(".this") ? short.slice(0, -5) : short.replace(".this[", "[");
+  }
+  function hopName(h) { return h.src === h.dst ? `${displayName(h.src)}  (wait)` : `${displayName(h.src)} → ${displayName(h.dst)}`; }
+
+  // ---------------------------------------------------------------- state
+  // Structural keys rebuild the SVG (redraw); the rest only toggle classes (applyState).
+  const STRUCTURAL = new Set(["scenario", "showNetwork", "allEdges", "allHops", "fit"]);
+  const state = { scenario: 0, showNetwork: false, allEdges: false, allHops: false, fit: true,
+                  selected: null, hover: null, highlight: null };
+  function set(patch) {
+    let structural = false;
+    for (const [k, v] of Object.entries(patch)) { if (state[k] !== v) { state[k] = v; if (STRUCTURAL.has(k)) structural = true; } }
+    if (structural) redraw(); else applyState();
+  }
+  const current = () => data.scenarios[state.scenario] || null;
+  const currentRaw = () => data.report.scenarios[state.scenario] || null;
+
+  function redraw() {
+    $$("[role=tab]").forEach((t, i) => { t.setAttribute("aria-selected", String(i === state.scenario)); t.tabIndex = i === state.scenario ? 0 : -1; });
+    $("#stage").classList.toggle("fit", state.fit);
+    renderKpis();
+    drawMap();
+    applyState();
+  }
+
+  function applyState() {
+    const sel = state.selected, hov = state.hover, hi = state.highlight;
+    for (const g of $$("#svg .node")) {
+      const id = g.dataset.id;
+      g.classList.toggle("selected", !!sel && sel.type === "node" && sel.id === id);
+      g.classList.toggle("hover", !!hov && hov.type === "node" && hov.id === id);
+      g.classList.toggle("highlight", !!hi && hi.nodes && hi.nodes.has(id));
+    }
+    for (const g of $$("#svg .edge")) {
+      const k = g.dataset.key;
+      g.classList.toggle("selected", !!sel && sel.type === "edge" && sel.key === k);
+      g.classList.toggle("hover", !!hov && hov.type === "edge" && hov.key === k);
+      g.classList.toggle("highlight", !!hi && hi.keys && hi.keys.has(k));
+    }
+    tooltip.update();
+  }
+
+  // ---------------------------------------------------------------- layout
+  // Region / AZ swimlanes, left to right by longest-path depth from the sources.
+  const COL = 190, ROW = 64, NODE_W = 150, NODE_H = 40, PAD_L = 110, PAD_T = 30;
+  function visibleNodes() { return Object.values(data.graph.nodes).filter((n) => state.showNetwork || n.kind !== "network"); }
+  function visibleEdges(ids) { return data.graph.edges.filter((e) => ids.has(e.src) && ids.has(e.dst) && e.src !== e.dst); }
+  function depths(nodes, edges) {
+    // longest-path depth from sources, bounded so cycles cannot spin
+    const d = {}; nodes.forEach((n) => { d[n.id] = 0; });
+    for (let round = 0; round < nodes.length; round++) {
+      let changed = false;
+      for (const e of edges) if (d[e.dst] < d[e.src] + 1 && d[e.src] + 1 < nodes.length) { d[e.dst] = d[e.src] + 1; changed = true; }
+      if (!changed) break;
+    }
+    return d;
+  }
+  function layout() {
+    const nodes = visibleNodes(), ids = new Set(nodes.map((n) => n.id)), edges = visibleEdges(ids);
+    const depth = depths(nodes, edges);
+    const lanes = new Map();   // region → [nodes]
+    for (const n of nodes) {
+      const r = n.kind === "external" ? "internet" : (n.placement.region || "unplaced");
+      if (!lanes.has(r)) lanes.set(r, []);
+      lanes.get(r).push(n);
+    }
+    const order = ["internet", ...[...lanes.keys()].filter((k) => k !== "internet" && k !== "unplaced").sort(), "unplaced"].filter((k) => lanes.has(k));
+    const pos = {}, bands = []; let y = PAD_T, maxX = 0;
+    for (const region of order) {
+      const members = lanes.get(region).sort((a, b) => ((a.placement.az || "") < (b.placement.az || "") ? -1 : 1));
+      const rows = {};                       // depth → next free row
+      let laneRows = 1;
+      for (const n of members) {
+        const dx = depth[n.id], r = rows[dx] || 0; rows[dx] = r + 1; laneRows = Math.max(laneRows, r + 1);
+        pos[n.id] = { x: PAD_L + dx * COL, y: y + 26 + r * ROW, n };
+        maxX = Math.max(maxX, PAD_L + dx * COL + NODE_W);
+      }
+      const h = 26 + laneRows * ROW + 6;
+      bands.push({ region, y, h, azs: [...new Set(members.map((m) => m.placement.az).filter(Boolean))] });
+      y += h + 12;
+    }
+    return { pos, bands, edges, width: maxX + 80, height: y + 20 };
+  }
+  function curve(a, b) {
+    const x1 = a.x + NODE_W, y1 = a.y + NODE_H / 2, x2 = b.x, y2 = b.y + NODE_H / 2;
+    if (a === b) return `M${x1},${y1} c 30,-30 30,30 0,0`;
+    if (x2 >= x1) { const c = (x2 - x1) / 2; return `M${x1},${y1} C${x1 + c},${y1} ${x2 - c},${y2} ${x2},${y2}`; }
+    // backwards: loop around below
+    const dy = 40; return `M${a.x + NODE_W / 2},${a.y + NODE_H} C${a.x + NODE_W / 2},${a.y + NODE_H + dy} ${b.x + NODE_W / 2},${b.y + NODE_H + dy} ${b.x + NODE_W / 2},${b.y + NODE_H}`;
+  }
+  function midpoint(a, b, i) {
+    if (a === b) return { x: a.x + NODE_W + 14, y: a.y - 4 + (i % 3) * 10 };
+    return { x: (a.x + NODE_W + b.x) / 2, y: (a.y + b.y) / 2 + NODE_H / 2 - 12 + (i % 4) * 6 };
+  }
+  function dominant(breakdown) {
+    let best = "other", bv = -1;
+    for (const [k, v] of Object.entries(breakdown || {})) { const c = CATS.includes(k) ? k : "other"; if (v > bv) { bv = v; best = c; } }
+    return best;
+  }
+
+  // ---------------------------------------------------------------- svg
+  // The map: request-map edges (or every edge), width = the selected scenario's hop ms,
+  // colour = dominant category, accent under-stroke on the path, the slowest hop marked.
+  const el = (tag, attrs = {}, parent) => {
+    const e = document.createElementNS(svgNS, tag);
+    for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+    if (parent) parent.appendChild(e);
+    return e;
+  };
+  function drawMap() {
+    const svg = $("#svg"); svg.innerHTML = "";
+    const L = layout(), sc = current();
+    svg.setAttribute("viewBox", `0 0 ${L.width} ${L.height}`);
+    svg.setAttribute("width", L.width); svg.setAttribute("height", L.height);
+    svg.style.maxWidth = state.fit ? `${L.width}px` : "";
+    const defs = el("defs", {}, svg);
+    for (const c of CATS) {
+      const m = el("marker", { id: `arrow-${c}`, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 13, markerHeight: 13, markerUnits: "userSpaceOnUse", orient: "auto-start-reverse" }, defs);  // fixed size, not × stroke width
+      el("path", { d: "M0,0 L10,5 L0,10 z", fill: `var(--${c})` }, m);
+    }
+    for (const b of L.bands) {
+      el("rect", { class: "lane", x: 8, y: b.y, width: L.width - 16, height: b.h, rx: 8 }, svg);
+      el("text", { class: "lane-label", x: 18, y: b.y + 16 }, svg).textContent = b.region;
+      if (b.azs.length) el("text", { class: "az-label", x: 18, y: b.y + 30 }, svg).textContent = b.azs.join(" · ");
+    }
+    const drawn = L.edges.filter((e) => state.allEdges || data.requestMap.has(key(e.src, e.dst)));
+    const seen = new Set();
+    const edgesG = el("g", { class: "edges" }, svg);
+    for (const e of drawn) {
+      const k = key(e.src, e.dst);
+      if (seen.has(k)) continue;           // several edges on one pair draw once
+      seen.add(k);
+      drawEdge(edgesG, e, k, L, sc);
+    }
+    const nodesG = el("g", { class: "nodes" }, svg);
+    for (const [id, p] of Object.entries(L.pos)) drawNode(nodesG, id, p, sc);
+    if (sc) drawBadges(svg, L, sc);
+  }
+
+  function drawEdge(parent, e, k, L, sc) {
+    const a = L.pos[e.src], b = L.pos[e.dst];
+    const agg = sc && sc.byKey.get(k);
+    const on = !!agg;
+    const breakdown = on ? agg.breakdown : e.latency && e.latency.breakdown;
+    const cat = dominant(breakdown);
+    const w = on ? 1.5 + 8 * Math.sqrt(agg.ms / sc.maxMs) : 1.5;
+    const slowest = on && sc.slowest && agg.hops.includes(sc.slowest);
+    const cls = ["edge", on ? "on" : "", slowest ? "slowest" : "", !data.requestMap.has(k) && !on ? "muted" : "", sc && !on ? "muted" : ""].join(" ");
+    const g = el("g", { class: cls, "data-key": k, tabindex: 0, role: "button",
+                        "aria-label": `${displayName(e.src)} → ${displayName(e.dst)}${on ? ", " + fmt.ms(agg.ms) : ""}` }, parent);
+    const d = curve(a, b);
+    el("path", { d, class: "under", "stroke-width": w + 5 }, g);
+    el("path", { d, class: "line", stroke: `var(--${cat})`, "stroke-width": w, "marker-end": `url(#arrow-${cat})` }, g);
+    el("path", { d, class: "hit" }, g);
+    if (slowest) {
+      const m = midpoint(a, b, 0);
+      el("text", { class: "slow-label", x: m.x, y: m.y - 14 }, g).textContent = `slowest · ${fmt.ms(sc.slowest.latency_ms)}`;
+    }
+    wire(g, { type: "edge", key: k });
+  }
+
+  function drawNode(parent, id, p, sc) {
+    const n = p.n, onPath = sc ? sc.nodes.has(id) : false;
+    const touched = data.scenarios.some((s) => s.nodes.has(id));
+    const finding = sc && sc.perNode[id];
+    const g = el("g", { class: ["node", sc && !onPath ? "muted" : !touched ? "muted" : ""].join(" "), transform: `translate(${p.x},${p.y})`,
+                        "data-id": id, tabindex: 0, role: "button", "aria-label": `${displayName(id)}, ${n.kind}` }, parent);
+    el("rect", { class: "box", width: NODE_W, height: NODE_H, fill: `var(--${KINDS.includes(n.kind) ? n.kind : "other"})` }, g);
+    el("text", { x: 8, y: 16 }, g).textContent = fmt.clip(displayName(id), 22);
+    el("text", { x: 8, y: 31, class: "sub" }, g).textContent = `${n.subtype}${n.placement.az ? " · " + n.placement.az : ""}`;
+    if (finding) {                          // share of the scenario's total, under the box
+      const barW = NODE_W - 46;
+      el("rect", { class: "share-bg", x: 0, y: NODE_H + 5, width: barW, height: 4, rx: 2 }, g);
+      el("rect", { class: "share", x: 0, y: NODE_H + 5, width: Math.max(2, barW * Math.min(1, finding.share)), height: 4, rx: 2 }, g);
+      el("text", { class: "ms", x: NODE_W, y: NODE_H + 10 }, g).textContent = fmt.n(finding.latency_ms);
+    }
+    wire(g, { type: "node", id });
+  }
+
+  function drawBadges(svg, L, sc) {
+    const g = el("g", { class: "badges" }, svg);
+    for (const h of sc.hops) {              // hop numbers at the midpoint of each path edge
+      const a = L.pos[h.src], b = L.pos[h.dst]; if (!a || !b) continue;
+      const m = midpoint(a, b, h.index);
+      const badge = el("g", { class: `badge${h.on_critical_path ? "" : " hollow"}`, transform: `translate(${m.x},${m.y})` }, g);
+      el("circle", { r: 9 }, badge); el("text", {}, badge).textContent = h.index;
+    }
+  }
+
+  // hover / focus → tooltip; click / Enter / Space → selection
+  function wire(g, ref) {
+    g.addEventListener("mouseenter", () => set({ hover: ref }));
+    g.addEventListener("mouseleave", () => set({ hover: null }));
+    g.addEventListener("focus", () => set({ hover: ref }));
+    g.addEventListener("blur", () => set({ hover: null }));
+    g.addEventListener("click", (ev) => { ev.stopPropagation(); select(ref); });
+    g.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); select(ref); } });
+  }
+  function same(a, b) { return !!a && !!b && a.type === b.type && a.id === b.id && a.key === b.key; }
+  function select(ref) { set({ selected: same(state.selected, ref) ? null : ref }); }
+
+  // ---------------------------------------------------------------- tooltip
+  // One element, positioned beside the hovered / focused node or edge.
+  const tooltip = {
+    update() {
+      const t = $("#tooltip"), h = state.hover;
+      if (!h) { t.hidden = true; return; }
+      const target = h.type === "node" ? $(`#svg .node[data-id="${CSS.escape(h.id)}"]`) : $(`#svg .edge[data-key="${CSS.escape(h.key)}"]`);
+      if (!target) { t.hidden = true; return; }
+      t.innerHTML = h.type === "node" ? tooltip.node(h.id) : tooltip.edge(h.key);
+      t.hidden = false;
+      const stage = $("#stage").getBoundingClientRect(), box = target.getBoundingClientRect();
+      let x = box.left - stage.left + $("#stage").scrollLeft + box.width / 2 + 12;
+      let y = box.top - stage.top + $("#stage").scrollTop + box.height / 2 + 12;
+      x = Math.min(x, stage.width - t.offsetWidth - 8); y = Math.min(y, stage.height + $("#stage").scrollTop - t.offsetHeight - 8);
+      t.style.left = `${Math.max(0, x)}px`; t.style.top = `${Math.max(0, y)}px`;
+    },
+    node(id) {
+      const n = data.graph.nodes[id], sc = current(), f = sc && sc.perNode[id];
+      const place = [n.placement.region, n.placement.az].filter(Boolean).join(" · ") || "unplaced";
+      const raw = currentRaw();
+      return `<b>${esc(displayName(id))}</b><div class="sub">${esc(n.kind)} / ${esc(n.subtype)} · ${esc(place)}</div>` +
+        (f ? `<div><b>${fmt.ms(f.latency_ms)}</b> · ${fmt.pct(f.share)} of ${esc(raw.name)}</div><div class="sub">${esc(f.detail)}</div>`
+           : sc ? `<div class="sub">not on ${esc(raw.name)}</div>` : "");
+    },
+    edge(k) {
+      const sc = current(), agg = sc && sc.byKey.get(k), e = (data.edgesByKey.get(k) || [])[0];
+      const [src, dst] = k.split("→");
+      let html = `<b>${esc(displayName(src))} → ${esc(displayName(dst))}</b>`;
+      if (agg) {
+        const ps = agg.percentiles;
+        html += `<div><b>${fmt.ms(agg.ms)}</b>${agg.hops.length > 1 ? ` <span class="sub">· ${agg.hops.length} hops on this edge</span>` : ""}</div>` +
+          stackedBar(agg.breakdown) +
+          (ps.length ? `<div class="sub">p50 ${fmt.n(ps.reduce((s, p) => s + (p.p50 || 0), 0))} · p99 ${fmt.n(ps.reduce((s, p) => s + (p.p99 || 0), 0))} ms</div>` : "");
+      } else if (e && e.latency) {
+        html += `<div><b>${fmt.ms(e.latency.expected)}</b> <span class="sub">one-way expected</span></div>` + stackedBar(e.latency.breakdown);
+      }
+      if (e) html += `<div class="sub">${esc(e.kind)} · ${esc(e.rule)} · ${esc(e.confidence)}</div>`;
+      return html;
+    },
+  };
+  function stackedBar(breakdown) {
+    const parts = Object.entries(breakdown || {}).filter(([, v]) => v > 0);
+    const total = parts.reduce((s, [, v]) => s + v, 0);
+    if (!total) return "";
+    const segs = parts.map(([c, v]) => `<span style="width:${(100 * v / total).toFixed(1)}%;background:var(--${CATS.includes(c) ? c : "other"})"></span>`).join("");
+    const legend = parts.map(([c, v]) => `<i style="--c:var(--${CATS.includes(c) ? c : "other"})"></i>${esc(c)} ${fmt.n(v)}`).join(" · ");
+    return `<div class="bar">${segs}</div><div class="breakdown">${legend}</div>`;
+  }
+
+  // ---------------------------------------------------------------- header / KPI strip / legend
+  function shapeText(s) {
+    if (!s) return "";
+    const parts = [`${Math.trunc(s.hop_count || 0)} hops`];
+    if (s.parallel_groups) parts.push(`${Math.trunc(s.parallel_groups)} parallel group(s) saving ${fmt.n(s.parallel_savings_ms)} ms`);
+    if (s.fanout_copies) parts.push(`fan-out ×${Math.trunc(s.fanout_copies)} costed once`);
+    if (s.wait_ms) parts.push(`${fmt.n0(s.wait_ms)} ms of waits`);
+    return parts.join("; ");
+  }
+  function renderHeader() {
+    const r = data.report, g = data.graph;
+    $("#meta").innerHTML = `${esc(g.source_format || "graph")} · <b>${Object.keys(g.nodes).length}</b> nodes · <b>${g.edges.length}</b> edges` +
+      ` · ${esc(r.generated_at || "")} · profile ${esc((r.profile && r.profile.sources || []).join(" → "))}`;
+    const tabs = $("#tabs"); tabs.innerHTML = "";
+    r.scenarios.forEach((s, i) => {
+      const b = document.createElement("button");
+      b.setAttribute("role", "tab"); b.id = `tab-${i}`; b.dataset.index = i;
+      b.innerHTML = `${esc(s.name)}<small>${fmt.ms(s.total_ms)}</small>`;
+      b.addEventListener("click", () => set({ scenario: i, selected: null }));
+      tabs.appendChild(b);
+    });
+    const bind = (id, k) => { const c = $(id); c.checked = state[k]; c.addEventListener("change", () => set({ [k]: c.checked })); };
+    bind("#t-network", "showNetwork"); bind("#t-alledges", "allEdges"); bind("#t-allhops", "allHops"); bind("#t-fit", "fit");
+    if (g.edges.length > 1000) { const c = $("#t-alledges"); c.disabled = true; c.parentElement.title = `${g.edges.length} edges — the request map only`; }
+  }
+  function kpi(label, value, extra = "", cls = "") {
+    return `<div class="kpi ${cls}"><div class="label">${esc(label)}</div><div class="value ${extra}">${value}</div></div>`;
+  }
+  function renderKpis() {
+    const s = currentRaw(), r = data.report; if (!s) { $("#kpis").innerHTML = ""; return; }
+    const p = s.percentiles || {}, tiles = [];
+    tiles.push(kpi(s.samples ? "mean" : "total", `${fmt.n(s.total_ms)}<small> ms</small>`));
+    if (p.p50 !== undefined) tiles.push(kpi("tail", ["p50", "p95", "p99"].filter((k) => p[k] !== undefined).map((k) => `<small>${k}</small> ${fmt.n(p[k])}`).join(" · ")));
+    if (s.samples) tiles.push(kpi("samples", fmt.n0(s.samples)));
+    tiles.push(kpi("hops", `${s.hops.length}<small> · ${esc(s.source)}</small>`));
+    tiles.push(kpi("shape", esc(shapeText(s.shape)), "text"));
+    const ftb = r.capacity && r.capacity.first_to_break;
+    if (ftb) tiles.push(`<div class="kpi accent"><a href="#capacity"><div class="label">breaks at</div>` +
+      `<div class="value">~${fmt.n0(ftb.users)}<small> users · ${esc(displayName(ftb.resource))}</small></div></a></div>`);
+    $("#kpis").innerHTML = tiles.join("");
+  }
+  function renderLegend() {
+    const out = [];
+    for (const k of KINDS) out.push(`<span style="--c:var(--${k})">${k}</span>`);
+    for (const c of CATS) out.push(`<span class="edge" style="--c:var(--${c})">${c}</span>`);
+    out.push(`<span class="slowest">slowest hop</span>`, `<span class="badge">hop on the critical path</span>`, `<span class="hollow">hop off the critical path</span>`);
+    $("#legend").innerHTML = out.join("");
+  }
+  function notice(html) { const n = $("#notice"); n.innerHTML = html; n.hidden = false; }
+
+  // ---------------------------------------------------------------- diff page (minimal until WP5)
+  function renderDiff(diff) {
+    const after = diff.graphs && diff.graphs.after, before = diff.graphs && diff.graphs.before;
+    const counts = {}; for (const g of [before, after]) for (const n of Object.values((g && g.nodes) || {})) if (n.label) counts[n.label] = (counts[n.label] || 0) + 1;
+    const name = (id) => displayName(id, (after && after.nodes[id]) ? after : before, counts);
+    const edgeName = (e) => (typeof e === "string" ? e : `${name(e.src || e[0])} → ${name(e.dst || e[1])}`);
+    $("#meta").innerHTML = `<b>${esc(diff.before)}</b> → <b>${esc(diff.after)}</b> · ${esc(diff.generated_at || "")} · profile ${esc((diff.profile_sources || []).join(" → "))}`;
+    for (const id of ["#tabs", "#toggles", "#map", "#rail", "#legend", "#capacity", "#warnings"]) $(id).hidden = true;
+    const tiles = diff.scenarios.map((s) => {
+      const dir = s.delta_ms > 0 ? "worse" : s.delta_ms < 0 ? "better" : "";
+      const sign = s.delta_ms > 0 ? "+" : "";
+      const pct = s.delta_pct === null || s.delta_pct === undefined ? "" : ` (${sign}${fmt.n0(s.delta_pct * 100)} %)`;
+      return `<div class="tile"><div class="name">${esc(s.name)}</div>` +
+        (s.status === "both" ? `<div>${fmt.ms(s.before_ms)} → ${fmt.ms(s.after_ms)}</div><div class="delta ${dir}">${sign}${fmt.ms(s.delta_ms)}${esc(pct)}</div>`
+                             : `<div class="sub">${esc(s.status.replace("_", " "))}</div>`) + `</div>`;
+    });
+    $("#kpis").innerHTML = tiles.join("") || `<div class="kpi"><div class="value text">no scenarios on either side</div></div>`;
+    const g = diff.graph || {}, items = [];
+    for (const m of g.nodes_moved || []) items.push(`<li><b>${esc(name(m.node_id))}</b> (${esc(m.field)}): <code>${esc(m.before)}</code> → <code>${esc(m.after)}</code></li>`);
+    for (const id of g.nodes_added || []) items.push(`<li>added <b>${esc(name(id))}</b></li>`);
+    for (const id of g.nodes_removed || []) items.push(`<li>removed <b>${esc(name(id))}</b></li>`);
+    for (const e of g.edges_added || []) items.push(`<li>added edge ${esc(edgeName(e))}</li>`);
+    for (const e of g.edges_removed || []) items.push(`<li>removed edge ${esc(edgeName(e))}</li>`);
+    $("#tables").innerHTML = `<h2>What changed</h2>` + (items.length ? `<ul class="changes">${items.join("")}</ul>` : `<div class="sub">no graph change — the numbers moved for another reason (profile, scenarios)</div>`);
+  }
+
+  // ---------------------------------------------------------------- boot
+  function boot() {
+    const blob = parseBlob();
+    if (!blob || !(blob.report || blob.diff)) {
+      notice("No data — run <code>iacsim run &lt;dir&gt; -o html</code> or <code>iacsim view &lt;dir&gt;</code>");
+      for (const id of ["#header", "#kpis", "#map", "#legend"]) $(id).hidden = true;
+      return;
+    }
+    data.blob = blob; data.kind = blob.kind; data.options = blob.options || {}; data.sections = blob.sections || [];
+    if (blob.kind === "diff") { renderDiff(blob.diff); return; }
+    const report = blob.report;
+    if (String(report.schema_version) !== "2") notice(`This report is schema ${esc(report.schema_version)}; the dashboard reads schema 2 — some panels may be empty. Re-run <code>iacsim run</code>.`);
+    index(report);
+    state.allHops = !!data.options.all_hops;
+    renderHeader(); renderLegend();
+    document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") set({ selected: null, hover: null }); });
+    $("#stage").addEventListener("click", () => set({ selected: null }));
+    redraw();
+  }
+  boot();
+})();
+</script>
+</body>
+</html>

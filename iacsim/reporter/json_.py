@@ -72,18 +72,7 @@ from iacsim.diff.models import DiffReport
 @REPORTERS.register("json")
 class JsonReporter(Reporter):
     def render(self, findings: list[Findings], graph: InfraGraph) -> str:
-        sources = findings[0].profile_sources if findings else []
-        return json.dumps(
-            {
-                "schema_version": SCHEMA_VERSION,
-                "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
-                "profile": {"sources": sources},
-                "graph": graph.to_dict(),
-                "scenarios": [f.to_dict() for f in findings],
-                "capacity": _capacity(findings),
-            },
-            indent=2, default=str, allow_nan=False,
-        )
+        return json.dumps(report_payload(findings, graph), indent=2, default=str, allow_nan=False)
 
     def render_diff(self, diff: DiffReport, before: InfraGraph, after: InfraGraph) -> str:
         payload = diff.to_dict()
@@ -106,4 +95,18 @@ def _capacity(findings: list[Findings]) -> dict:
         "utilisation": load.utilisation,
         "first_to_break": ({"resource": breaks[0].refs[0], "users": breaks[0].latency_ms, "detail": breaks[0].detail}
                            if breaks else None),
+    }
+
+
+def report_payload(findings: list[Findings], graph: InfraGraph) -> dict:
+    """The schema-2 document as a dict — `JsonReporter` serialises it, the html
+    reporter inlines it into the dashboard. Keys and their order are the contract."""
+    sources = findings[0].profile_sources if findings else []
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "profile": {"sources": sources},
+        "graph": graph.to_dict(),
+        "scenarios": [f.to_dict() for f in findings],
+        "capacity": _capacity(findings),
     }
