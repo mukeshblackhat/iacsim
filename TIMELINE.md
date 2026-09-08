@@ -591,6 +591,8 @@ substitution, `prepare`, the sample); browser smoke through the Playwright MCP a
 WP3, WP4 and WP5 (node count, drawer evidence, Escape, tab badge counts, no console errors,
 dark mode) — checklist in `CONTRIBUTING.md`, not in pytest. No push.
 
+Audit: an independent read-only review of the page's JavaScript against the JSON contract (every field access, escaping, state, edge cases on the three real payloads) found one defect — `iacsim diff --align-by label` reported added/removed edges by *label*, so the diff page could not map them back to nodes and drew nothing for them. Fixed in `iacsim/diff/differ.py`: edges are compared by the alignment key but reported by node id, with a regression test.
+
 ## Milestones
 
 | # | Goal | Deliverable / acceptance | Status | Date |

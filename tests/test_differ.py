@@ -146,3 +146,19 @@ def test_regressions_respect_both_units():
     assert report.regressions(("ms", 50)) == []
     assert [s.name for s in report.regressions(("percent", 10))] == ["s"]
     assert report.regressions(("percent", 30)) == []
+
+
+def test_graph_diff_reports_edges_by_id_even_when_aligned_by_label():
+    """Edges are *compared* by the alignment key but *reported* by node id: the
+    dashboard and the what-changed table resolve `src → dst` back to nodes, and
+    a label is not an address. Found by the M15 audit."""
+    tf, cfn = InfraGraph(), InfraGraph()
+    for g, api, table in ((tf, "aws_lambda_function.api", "aws_dynamodb_table.orders"),
+                          (cfn, "ApiLambdaABC123", "OrdersTable9F2E")):
+        g.add_node(Node(api, NodeKind.COMPUTE, "lambda", Placement("us-east-1"), label="api"))
+        g.add_node(Node(table, NodeKind.DATASTORE, "dynamodb", Placement("us-east-1"), label="orders"))
+    cfn.add_edge(Edge("ApiLambdaABC123", "OrdersTable9F2E", EdgeKind.READ, Confidence.HIGH, "env var"))
+    d = diff_graphs(tf, cfn, align_by="label")
+    assert d.nodes_added == [] and d.nodes_removed == []                       # same stack, two spellings
+    assert d.edges_added == ["ApiLambdaABC123 → OrdersTable9F2E (read)"]  # after-graph ids, not "api → orders"
+    assert diff_graphs(cfn, tf, align_by="label").edges_removed == ["ApiLambdaABC123 → OrdersTable9F2E (read)"]

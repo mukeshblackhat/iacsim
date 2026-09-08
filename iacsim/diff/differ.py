@@ -90,10 +90,12 @@ def diff_graphs(before: InfraGraph, after: InfraGraph, align_by: str = "id") -> 
             if b_val != a_val and _counts_as_move(field_name, align_by):
                 diff.nodes_moved.append(NodeMove(a_nodes[k].id, field_name, b_val, a_val))
 
-    b_edges = {_edge_key(e, before, key) for e in before.edges}
-    a_edges = {_edge_key(e, after, key) for e in after.edges}
-    diff.edges_added = sorted(a_edges - b_edges)
-    diff.edges_removed = sorted(b_edges - a_edges)
+    # Compare edges by the alignment key, but report them by node id: the dashboard
+    # and the tables resolve `src → dst` back to nodes, and a label is not an address.
+    b_edges = {_edge_key(e, before, key): _edge_key(e, before, _node_key("id")) for e in before.edges}
+    a_edges = {_edge_key(e, after, key): _edge_key(e, after, _node_key("id")) for e in after.edges}
+    diff.edges_added = sorted(a_edges[k] for k in a_edges.keys() - b_edges.keys())
+    diff.edges_removed = sorted(b_edges[k] for k in b_edges.keys() - a_edges.keys())
     return diff
 
 
