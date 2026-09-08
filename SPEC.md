@@ -84,7 +84,7 @@ and gets a report: total latency, ranked bottleneck list, and per-hop breakdown.
 - Live *tracing* (X-Ray per-hop timings). Aggregate metrics via `iacsim calibrate` are in (M7).
 - Application code analysis (we don't read Lambda source to figure out what it calls).
 - Reading CDK / Pulumi source directly (Q5) — run `cdk synth` yourself and point the tool at `cdk.out/`.
-- Web UI in v1 (Q2: deferred to M6 — a static graph viewer reading `graph.json` / `report.json`).
+- A web *console* (server, accounts, a history of runs). The visual output shipped as **M15** instead: `iacsim run … -o html` / `iacsim diff … -o html` write one self-contained page per run (the `html` reporter), and `iacsim view` serves the same page — see `DECISIONS.md` D54.
 
 ## 4. Inputs and outputs
 
@@ -383,7 +383,7 @@ Questions are asked one at a time. Each answer gets recorded here and the sectio
 | # | Question | Decision | Rationale |
 |---|---|---|---|
 | Q1 | Language / stack | **Python 3.12** — `python-hcl2` (Terraform parsing), `typer` (CLI), `pyyaml`, `rich`, `pytest`; `numpy` optional (Monte-Carlo) | Fastest to prototype; strongest HCL library outside Go (TS options are thin or wrap a Go binary); the graph is plain dataclasses (`networkx` was planned and dropped as unused); Foosh infra is Python CDK. TypeScript was considered and rejected for v1 — it only wins if the engine must run in-browser, which the JSON-viewer plan avoids |
-| Q2 | Interface | **CLI + JSON first; web graph viewer later (M6)** | `graph.json` / `report.json` are the contract, so a viewer can be bolted on without touching the engine |
+| Q2 | Interface | **CLI + JSON first; web graph viewer later (M6)** — became the dashboard in M15: `-o html` and `iacsim view` render one page from `report.json` | `graph.json` / `report.json` are the contract, so a viewer can be bolted on without touching the engine — M15 did exactly that: the dashboard is a reporter, no engine file changed |
 | Q3 | Request paths | **Infer from IaC evidence + optional `scenarios.yaml` overrides** | Works out of the box on a fresh repo; engineer only writes scenarios to pin exact paths or fix wrong guesses. Every inferred hop carries an `evidence` string so wrong guesses are visible and correctable |
 | Q4 | Latency numbers | **Build defaults + `--profile` override now (v1); design the profile format and module layout so `iacsim calibrate` (pull real numbers from CloudWatch) slots in later (M7)** | Comparative results are fine with public defaults; measured numbers make it trustworthy. Calibration needs AWS creds so it stays optional and separate |
 | Q5 | Input formats | **Terraform (primary, M1) + CloudFormation JSON/YAML adapter (M5)** | CloudFormation is what CDK / SAM / Serverless Framework emit, so Foosh's `cdk.out/*.template.json` is a real test case with no rewriting. Reading CDK source directly is deferred — `cdk synth` output already covers it |

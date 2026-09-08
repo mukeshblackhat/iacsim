@@ -33,7 +33,9 @@ test to copy. In short:
 - **An analyzer** — subclass `Analyzer`, register in `ANALYZERS`, return `Finding`s (return `[]` when
   not applicable so it can stay on by default); add to `analysis.analyzers`.
 - **A reporter** — subclass `Reporter`, register in `REPORTERS`, render the shared `Brief` from
-  `reporter/_brief.py`; select with `report.outputs`.
+  `reporter/_brief.py` — or inline the JSON payload like `html` does (`report_payload()` from
+  `reporter/json_.py` + `render_page()` from `reporter/html_.py`, one placeholder in a template);
+  select with `report.outputs`.
 - **A metric source** (calibration) — subclass `MetricSource`, implement `supports(kind)` and
   `measure(kind, name, window, region)`, register in `METRIC_SOURCES`; options come from
   `calibrate.sources.<name>` — never credentials; copy `latency/calibrate/fake.py`.
@@ -72,6 +74,30 @@ no fork needed.
 - Every inferred edge and every hop must say *why* (evidence strings are the product, not decoration).
 - Tests assert formulas over profile values (`2 * 2 * (cross_region - same_az)`), not magic numbers.
 - Unresolvable input is a warning, never a crash.
+
+## Browser smoke for the dashboard
+
+The page's JavaScript is outside pytest and the coverage gate on purpose (`DECISIONS.md` D54);
+what Python can decide — payload, section titles, escaping, substitution, `prepare`, the sample —
+is tested in Python. So after any change to `iacsim/viewer/index.html` or `reporter/html_.py`,
+open the page in a real browser once. It is run through the Playwright MCP (or by hand); it is
+**not** in `make check` and adds no dependency.
+
+1. `make dashboard-sample` (also run by `make examples`), then open
+   `examples/dashboard/gcp-web/report.html` from `file://` — and `foosh-load/report.html` for the
+   capacity band.
+2. The map is the first thing on screen; `g.node` count equals the header's node count (30 for
+   foosh-load).
+3. Click a node on the path (API Gateway in foosh-load) → the drawer opens and shows the hop's
+   evidence text ("is a public entry point"); Escape closes it and focus returns to the node.
+4. Switch scenario tab → the hop badges on the map count exactly that scenario's hops and the
+   total in the tab matches the KPI strip.
+5. No console errors or warnings.
+6. Once more with dark mode emulated (`prefers-color-scheme: dark`) — the map, the bars and the
+   heatmap stay readable.
+
+Then `make check`: `tests/test_dashboard_sample.py` fails if the committed sample no longer matches
+what the tool produces.
 
 ## Commits
 

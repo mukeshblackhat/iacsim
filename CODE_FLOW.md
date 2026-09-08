@@ -58,7 +58,7 @@ Every command starts the same way:
 | 1 | `_bootstrap`, `load_config` | above | overrides: `latency.profiles` (`"defaults"` is always first, then each `-p`), `simulation.walker/samples/seed/load`, `format`, `parsers.cloudformation.region`, `report.outputs` |
 | 2 | **branch:** `simulation.walker == "load"` | `iacsim/cli.py:~97` | resolves `load.yaml` relative to the base dir; missing → `BadParameter` (exit 2). Other walkers skip this. |
 | 3 | `pipeline.run(target, cfg)` | `iacsim/core/pipeline.py:140` | the eight stages below |
-| 4 | `write_reports` | `iacsim/reporter/writer.py:16` | for each name in `report.outputs`: `text` → stdout (colour only on a TTY); anything else → `<base>/.iacsim/report.<ext>` |
+| 4 | `write_reports` | `iacsim/reporter/writer.py:16` | for each name in `report.outputs`: `text` → stdout (colour only on a TTY); anything else → `<base>/.iacsim/report.<ext>` (`REPORT_EXTENSIONS` `iacsim/reporter/writer.py:13`; `html` → `report.html`, the dashboard, not in the defaults — ask with `-o html`) |
 
 **`pipeline.run` in order** (`iacsim/core/pipeline.py:140-149`):
 
@@ -92,15 +92,22 @@ failing unless `--strict`.)
    (`iacsim/diff/differ.py:74`: nodes by id, or by label with `--align-by label`; a "move" is a
    change of region/az/vpc) + per-scenario `diff_scenario` (`iacsim/diff/differ.py:122`) → values,
    hops by label + occurrence (`iacsim/diff/differ.py:164`), recommendations (`iacsim/diff/differ.py:194`).
-4. Render through each reporter's `render_diff`; text → stdout, others → `<after>/.iacsim/diff.<ext>`.
+4. Render through each reporter's `render_diff`; text → stdout, others → `<after>/.iacsim/diff.<ext>` (`html` → `diff.html`: the diff page, the *after* graph with added / moved / removed nodes ringed).
 5. `summarise` (`iacsim/diff/differ.py:220`) → threshold check → exit 2 on a regression.
 
-### 2.5 `iacsim view <target>` — `iacsim/cli.py:216`
-`load_config` with `report.outputs = ["json"]` → `viewer.prepare` (`iacsim/viewer/__init__.py:32`:
-runs the pipeline **only if** `.iacsim/report.json` is missing, writes `report.json` +
-`graph.json`, copies `index.html`) → `viewer.serve` (`iacsim/viewer/__init__.py:51`: local
-HTTP server on `127.0.0.1`, `--port 0` picks a free port, `--duration` for tests). The HTML
-reads only the two JSON files — it never imports Python.
+### 2.5 `iacsim view <target>` — `iacsim/cli.py:314`
+`load_config` with `report.outputs = ["json"]` → `viewer.prepare` (`iacsim/viewer/__init__.py:43`:
+runs the pipeline **only if** `.iacsim/report.json` is missing or older than any input file
+beside the target (`is_stale`, `iacsim/viewer/__init__.py:60`), writing `report.json` +
+`graph.json`; then **always** renders `.iacsim/index.html` from `report.json` through
+`render_page` — `iacsim/reporter/html_.py` `render_page()`, the same function `-o html` uses,
+so the served page and `report.html` are the same page) → `viewer.bind`
+(`iacsim/viewer/__init__.py:73`: local HTTP server on `127.0.0.1`, `--port 0` picks a free
+port, a busy port → exit 2) → `viewer.run` (`:81`: opens the browser, `--duration` for tests).
+Nothing is fetched at runtime: the data sits in the page as a JSON blob
+(`<script type="application/json" id="iacsim-data">`), so `file://` and `http://` show the
+same bytes. The template `iacsim/viewer/index.html` never imports Python; the reporter reads
+it by path so that importing `html_` does not pull in `http.server`.
 
 ### 2.6 `iacsim calibrate <target>` — `iacsim/cli.py:234`
 `load_config({calibrate.source, calibrate.window, format, region})` → `make_metric_source`
@@ -160,9 +167,13 @@ every gateway / load balancer / CDN (`:137`).
 | `saturation` | `iacsim/analyzer/saturation.py:32` | only with the load walker's sweep |
 
 Reporters: `text` (`iacsim/reporter/text.py:25`, rich tables), `markdown`
-(`iacsim/reporter/markdown.py:13`), `json` (`iacsim/reporter/json_.py:70`). Text and markdown
+(`iacsim/reporter/markdown.py:13`), `json` (`iacsim/reporter/json_.py:70`), `html`
+(`iacsim/reporter/html_.py` `HtmlReporter`: the dashboard — `report_payload()`
+`iacsim/reporter/json_.py:101`, the same dict the `json` reporter serialises, inlined into
+`iacsim/viewer/index.html` by `render_page()`; `_embed()` escapes `<`). Text and markdown
 both render the same `Brief` built in `iacsim/reporter/_brief.py:62`, so terminal and PR
-comment never disagree.
+comment never disagree; the page's section titles (`SECTION_TITLES` in `html_.py`) are held
+equal to the `Brief`'s by `tests/test_html_reporter.py`.
 
 ### 2.10 Worked example — `iacsim run examples/classic-web-bad` → `356.0 ms`
 
@@ -340,6 +351,7 @@ contended backend to get latency and p99 at that user count.
 | Layer A1 / A2 / A3 / B | distance / service cost / shape; B = application code (absorbed by calibration) | `iacsim/analyzer/_common.py:9-15` |
 | Brief | the ordered section list text and markdown both render | `iacsim/reporter/_brief.py:51` |
 | reporter | renders Findings or a DiffReport | `iacsim/core/interfaces.py:95` |
+| dashboard / `report.html` | the `html` reporter's page: the schema-2 payload inlined into `viewer/index.html`, drawn by the page's own JS; `iacsim view` serves the same page | `iacsim/reporter/html_.py:1`, `iacsim/viewer/__init__.py:43` |
 | extension point | an ABC + a registry + an `iacsim.yaml` key | `iacsim/core/interfaces.py:151-160` |
 | registry | name → class; `@REG.register("x")`, `REG.get("x")` | `iacsim/core/registry.py:35` |
 | plugin | a `.py` in `./plugins` (or an entry point) that registers an implementation | `plugins/README.md` |
@@ -361,7 +373,7 @@ config. Copy the named file and the named test.
 | a **cost rule** | `CostRule.cost(edge, graph, profile) -> {name: ms}` `iacsim/core/interfaces.py:73` | `COST_RULES` | `latency.rules: [...]` + a block in `defaults.yaml` | `iacsim/latency/rules/cold_start.py` | `tests/test_latency_rules.py` |
 | a **walker** | `Walker.run(graph, scenario, **options) -> Result` `iacsim/core/interfaces.py:81` — supply a `Backend`, reuse the `Planner` | `WALKERS` | `simulation.walker` | `iacsim/simulator/walkers/expected_value.py` (25 lines) | `tests/test_walker.py` |
 | an **analyzer** | `Analyzer.analyse(result, graph) -> [Finding]` `iacsim/core/interfaces.py:88`; return `[]` when not applicable | `ANALYZERS` | `analysis.analyzers: [...]` | `iacsim/analyzer/per_hop.py` | `tests/test_analyzers.py` |
-| a **reporter** | `Reporter.render(findings, graph) -> str` (+ `render_diff`) `iacsim/core/interfaces.py:95`; build from the `Brief` | `REPORTERS` | `report.outputs: [...]` | `iacsim/reporter/markdown.py` | `tests/test_reporters.py` |
+| a **reporter** | `Reporter.render(findings, graph) -> str` (+ `render_diff`) `iacsim/core/interfaces.py:95`; build from the `Brief` — or inline the payload (`report_payload()` `iacsim/reporter/json_.py:101` + `render_page()` in `iacsim/reporter/html_.py`) into a template of your own, the way `html` does; add the file extension to `REPORT_EXTENSIONS` `iacsim/reporter/writer.py:13` | `REPORTERS` | `report.outputs: [...]` | `iacsim/reporter/markdown.py` (`iacsim/reporter/html_.py` for a page) | `tests/test_reporters.py` (`tests/test_html_reporter.py`) |
 | a **metric source** (Datadog, Prometheus…) | `MetricSource.supports(kind)` / `.measure(kind, name, window, region)` `iacsim/core/interfaces.py:107` | `METRIC_SOURCES` | `calibrate.source` + `calibrate.sources.<name>: {…}` | `iacsim/latency/calibrate/fake.py` | `tests/test_calibrate.py` |
 | a **parser** (Pulumi, ARM, Kubernetes…) | `Parser.detect(path)` / `.parse(path) -> RawResources` `iacsim/core/interfaces.py:26`; emit canonical Terraform-shaped types and `${addr.attr}` placeholders | `PARSERS` (+ `DETECTION_ORDER` `iacsim/parsers/detect.py:10`) | `format:` / `parsers.<name>: {…}` | `iacsim/parsers/cloudformation/` (parser + canonical + intrinsics) | `tests/test_cloudformation_parser.py`, `tests/test_example_foosh_cfn.py` |
 | a **cloud provider** (Azure — M10, GCP — M11) | a normaliser `Normaliser.normalise(raw) -> InfraGraph` `iacsim/core/interfaces.py:46` with its own `TYPE_MAP` **and its own behaviour tables** (G4); inference rules carrying that provider's evidence; its region pairs added to the **one flat** `distance.cross_region` map `iacsim/latency/defaults.yaml:16`; a `processing` block per subtype, named so it cannot collide with an AWS subtype; the `"internet"` entry-node contract — all four spelled out under this table | `NORMALISERS` + `INFERENCE_RULES` | `provider:` | `iacsim/graph/normalisers/aws.py` + the 8 rules | one example stack + its `tests/test_example_*.py` |

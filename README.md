@@ -7,7 +7,7 @@ before you deploy. See `SPEC.md` for the design, `DECISIONS.md` for every choice
 milestones, `problem-statement.md` for the why, and `CONTRIBUTING.md` before sending a change.
 MIT licensed (`LICENSE`).
 
-**Status:** M0–M8 built; a deep-look hardening pass is in progress (see `TIMELINE.md`, 2026-09-05).
+**Status:** M0–M8, M11 (GCP) and M15 (the dashboard) built; a deep-look hardening pass is in progress (see `TIMELINE.md`, 2026-09-05).
 CI (`.github/workflows/ci.yml`) runs `make check` + `make examples` on Python 3.12 and 3.13.
 
 ```
@@ -21,7 +21,8 @@ iacsim calibrate examples/foosh-serverless                     # M7 — measured
 iacsim diff  ./main ./pr --fail-on-regression 50ms           # CI: exit 2 if any scenario grows > 50 ms (or 10%)
 iacsim diff  ./before ./after --scenario checkout -o markdown  # one scenario, PR-comment markdown → .iacsim/diff.md
 iacsim run   examples/foosh-serverless --walker monte_carlo --samples 10000 --seed 1   # M6: p50/p95/p99 + tail risk
-iacsim view  examples/classic-web-bad                         # M6: graph viewer in the browser
+iacsim run   examples/gcp-web -o html                          # M15: the dashboard → .iacsim/report.html (one file, opens from file://)
+iacsim view  examples/classic-web-bad                         # M15: the same dashboard, rendered from report.json and served
 iacsim run   examples/foosh-serverless --scenario poll_status  # only the named scenario(s)
 iacsim validate ./infra --strict                             # exit 1 on any parser warning, not only unwired steps
 iacsim --version
@@ -86,19 +87,58 @@ much faster; without it a pure-Python sampler is used. Spread is configurable in
 the profile (`variance.distance_sigma`, `variance.processing_sigma`, and a
 per-subtype `sigma`).
 
-## Graph viewer — `iacsim view`
+## Dashboard — `-o html` and `iacsim view`
 
-`iacsim view ./infra` runs the pipeline if needed, drops a single self-contained
-`index.html` into `.iacsim/` next to `report.json`, serves the folder on
-`127.0.0.1` and opens the browser (`--no-open` to skip, `--port` to pin one).
-The page draws every node in region / AZ swimlanes left-to-right in request
-order, edges with width ∝ expected latency and colour = dominant cost category
-(distance / processing / cold start); click a node or edge for its placement,
-attributes, evidence and breakdown; pick a scenario to overlay its path with
-hop numbers and see its total (and p50/p99 when sampled). Network nodes are
-hidden behind a toggle. No CDN, no build step — it reads only `report.json`
-(schema 2) or a bare `graph.json`, and offers a file picker when opened from
-`file://`.
+Three commands produce the same page:
+
+```
+iacsim run  ./infra -o html                       # .iacsim/report.html
+iacsim diff ./before ./after -o html              # <after>/.iacsim/diff.html
+iacsim view ./infra                               # renders .iacsim/index.html from report.json, serves it, opens the browser
+                                                  #   (--no-open to skip, --port to pin one; the pipeline runs only when report.json is stale)
+```
+
+`report.html` is one self-contained file — the report inlined as a JSON blob, no server,
+no library, no build step — so it opens from `file://` and is the file to send someone.
+Every number on it comes from the same schema-2 `report.json` the `json` reporter writes;
+nothing is computed in the browser that the engine did not already compute.
+
+What the page shows, in the order you meet it:
+
+- **Header** — source format, node / edge counts, when it was generated, and the profile rung
+  (`defaults → calibrated.yaml (cloudwatch, 24h)`, the same line the terminal prints); scenario
+  tabs; toggles for network nodes, every inferred edge, all hops, fit to width.
+- **KPI strip** — total (mean when sampled), p50 / p95 / p99 when present, samples,
+  declared | inferred, the shape line; with `--walker load`, a "breaks at ~N users · resource"
+  tile that jumps to the capacity band.
+- **The map, first** — nodes in region / AZ swimlanes, request order left to right. The selected
+  scenario's path carries numbered hop badges; arrow width is that hop's milliseconds, colour is
+  its dominant category (distance / processing / cold start), the slowest hop is marked, and
+  each node on the path shows its share as a bar. Hover an arrow or node for the breakdown;
+  click one for the **drawer** — its hops with evidence, the finding that names it, the
+  recommendations that touch it, its capacity row.
+- **Right rail** — *Where the time goes* (one 100 % stacked bar, A1 / A2 / A3 rows), *Top
+  bottlenecks* (click to select on the map), *Recommendations* (saves ~N ms, with the "based on"
+  reasoning folded under each).
+- **Hop table** — path order, critical-path marker, group, ms, p50 / p99 when sampled, a mini
+  breakdown bar, and the evidence **unclipped**; *Critical path* and *Tail risk* when those
+  findings exist; warnings last.
+- **Capacity band** ("users until it breaks", only after `--walker load`) — the utilisation
+  heatmap per resource and user count, p99 by users per scenario with the threshold rule and
+  saturation markers, and *What breaks first* with the IaC attribute that raises the ceiling.
+
+`diff.html` draws the *after* graph with added, moved and removed nodes ringed (a moved node
+carries "region: a → b"), before / after bars per scenario, the hops that changed, and the
+recommendations that appeared or disappeared.
+
+Keyboard: the scenario tabs are a tablist (arrow keys), nodes and edges are focusable, Escape
+closes the drawer, a skip link leads to the hop table; dark mode and reduced motion follow the
+system. `html` is not in the default `report.outputs` — the page is ~400 KB per run — so ask
+for it with `-o html` or put it in `iacsim.yaml`.
+
+Real samples live in `examples/dashboard/` (`gcp-web`, `foosh-load` with the capacity band,
+`classic-web-diff`) — regenerated tool output, held equal by a test, not mock data.
+`make dashboard` opens one.
 
 ## CloudFormation / CDK / SAM input
 
@@ -246,8 +286,8 @@ iacsim/
   latency/       defaults.yaml  profile.py  rules/  calibrate/{calibrator,writer,fake,cloudwatch,cloudwatch_queries}.py
   simulator/     traversal.py (shared planner + evaluator)  walkers/expected_value.py  monte_carlo.py
   analyzer/      per_hop  per_node  per_category  critical_path  recommendations  tail_risk  saturation
-  reporter/      text  markdown  json
-  viewer/        index.html (self-contained graph viewer) + serve helpers
+  reporter/      text  markdown  json  html_ (the dashboard: report_payload() inlined into viewer/index.html)
+  viewer/        index.html (the dashboard template — one placeholder, no CDN, no build) + serve helpers for `iacsim view`
   cli.py  differ.py
 examples/
   modules/       shared Terraform modules: network, load_balancer, compute, database
@@ -255,6 +295,7 @@ examples/
   classic-web-bad/  same, RDS in eu-west-1 over VPC peering
   foosh-serverless/ API GW → Lambdas → Step Functions → DynamoDB / S3 (hand-written Terraform twin)
   foosh-cfn/     the real `cdk synth` template of the same stack (secrets redacted) — M5 correctness check
+  dashboard/     real `-o html` output (gcp-web, foosh-load, classic-web-diff) — the shareable sample, held by a test
 plugins/         drop-in extensions (see plugins/README.md)
 tests/
 ```
