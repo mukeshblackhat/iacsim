@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>iacsim — sample dashboards</title>
+<style>
+  :root { --bg:#fafaf8; --fg:#1f2328; --muted:#6b7280; --panel:#fff; --line:#d0d7de; --accent:#e0245e; --gcp:#3f7fcd; --aws:#c2761a; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f1216; --fg:#e6e8eb; --muted:#9aa3ad; --panel:#171b21; --line:#2b323b; --gcp:#6fa3f2; --aws:#f0a65a; } }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  main { max-width:880px; margin:0 auto; padding:40px 24px 64px; }
+  h1 { font-size:28px; margin:0 0 6px; } .lede { color:var(--muted); margin:0 0 28px; max-width:64ch; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:28px 0 8px; }
+  ul { list-style:none; margin:0; padding:0; display:grid; gap:8px; }
+  li a { display:grid; grid-template-columns:auto 1fr auto; gap:14px; align-items:baseline; padding:12px 14px; background:var(--panel); border:1px solid var(--line); border-radius:8px; color:inherit; text-decoration:none; }
+  li a:hover { border-color:var(--accent); }
+  .tag { font-size:11px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; padding:2px 7px; border-radius:4px; color:#fff; }
+  .gcp { background:var(--gcp); } .aws { background:var(--aws); }
+  .what { color:var(--muted); font-size:13.5px; } .open { color:var(--accent); font-weight:600; font-size:13px; }
+  b { font-weight:600; }
+  footer { margin-top:36px; color:var(--muted); font-size:13px; border-top:1px solid var(--line); padding-top:14px; }
+  footer a { color:inherit; }
+</style>
+</head>
+<body><main>
+  <h1>iacsim — sample dashboards</h1>
+  <p class="lede">Real output of <code>iacsim run … -o html</code> and <code>iacsim diff … -o html</code> on example stacks and on unmodified public Terraform repositories. Every page is self-contained: click a box for its detail, hover an arrow for the breakdown, switch scenario with the tabs.</p>
+
+  <h2>Start here</h2>
+  <ul>
+    <li><a href="gcp-web/report.html"><span class="tag gcp">GCP</span><span><b>gcp-web</b> <span class="what">— Cloud Run + Cloud SQL + Memorystore behind a global load balancer · 160 ms page load</span></span><span class="open">open</span></a></li>
+    <li><a href="classic-web-diff/diff.html"><span class="tag aws">AWS · diff</span><span><b>classic-web → classic-web-bad</b> <span class="what">— the same stack with the database moved one region away · 57 → 356 ms</span></span><span class="open">open</span></a></li>
+    <li><a href="foosh-load/report.html"><span class="tag aws">AWS · load</span><span><b>foosh-serverless</b> <span class="what">— 30 nodes, 9 scenarios, with the capacity band: users until it breaks</span></span><span class="open">open</span></a></li>
+  </ul>
+
+  <h2>Public GCP repositories, unmodified</h2>
+  <ul>
+    <li><a href="real-world/gcp-ntier-serverless-web/report.html"><span class="tag gcp">GCP</span><span><b>google/skills</b> n-tier serverless web app <span class="what">— two Cloud Run tiers, Cloud SQL, Redis, full HTTPS chain · 260 ms</span></span><span class="open">open</span></a></li>
+    <li><a href="real-world/gcp-cloudrun-multiregion-glb/report.html"><span class="tag gcp">GCP</span><span><b>terraform-docs-samples</b> run/multiple_regions <span class="what">— one global load balancer, Cloud Run in two regions</span></span><span class="open">open</span></a></li>
+    <li><a href="real-world/gcp-glb-mig-backend/report.html"><span class="tag gcp">GCP</span><span><b>terraform-docs-samples</b> lb/external_http_lb_mig_backend <span class="what">— the minimal LB chain onto a managed instance group</span></span><span class="open">open</span></a></li>
+    <li><a href="real-world/gcp-lb-regional/report.html"><span class="tag gcp">GCP</span><span><b>terraform-docs-samples</b> lb/regional_external_http_load_balancer <span class="what">— the regional twin of every LB type</span></span><span class="open">open</span></a></li>
+    <li><a href="real-world/gcp-functions-firestore-pubsub/report.html"><span class="tag gcp">GCP</span><span><b>cloud-release-chat-bot</b> <span class="what">— Cloud Functions + Firestore + Pub/Sub + Scheduler (no public entry, so no inferred scenario)</span></span><span class="open">open</span></a></li>
+    <li><a href="real-world/gcp-eventarc-workflows-run/report.html"><span class="tag gcp">GCP</span><span><b>terraform-docs-samples</b> workflows/cloud_run_job <span class="what">— bucket event → Workflows → Cloud Run job</span></span><span class="open">open</span></a></li>
+    <li><a href="real-world/gcp-gke-multitenant/report.html"><span class="tag gcp">GCP</span><span><b>terraform-docs-samples</b> gke/quickstart/multitenant <span class="what">— GKE cluster + Cloud SQL</span></span><span class="open">open</span></a></li>
+  </ul>
+
+  <footer>Numbers are the built-in public averages (<code>latency/defaults.yaml</code>), marked as estimates; <code>iacsim calibrate</code> replaces them with measurements. Source and attributions: <a href="https://github.com/mukeshblackhat/iacsim">github.com/mukeshblackhat/iacsim</a>.</footer>
+</main></body>
+</html>

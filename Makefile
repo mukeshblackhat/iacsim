@@ -45,6 +45,8 @@ dashboard-sample:             ## regenerate examples/dashboard/ (real output; te
 	cp examples/foosh-serverless/.iacsim/report.json examples/foosh-serverless/.iacsim/report.html examples/dashboard/foosh-load/
 	.venv/bin/iacsim diff  examples/classic-web examples/classic-web-bad -o json -o html
 	cp examples/classic-web-bad/.iacsim/diff.json examples/classic-web-bad/.iacsim/diff.html examples/dashboard/classic-web-diff/
+	for d in examples/real-world/gcp-*/; do n=$$(basename $$d); .venv/bin/iacsim run $$d --region us-central1 -o html >/dev/null; \
+	  mkdir -p examples/dashboard/real-world/$$n && cp $$d.iacsim/report.html examples/dashboard/real-world/$$n/report.html; done
 
 dashboard:                    ## open the sample dashboard in the browser
 	open examples/dashboard/gcp-web/report.html 2>/dev/null || xdg-open examples/dashboard/gcp-web/report.html
