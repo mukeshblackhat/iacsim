@@ -44,3 +44,26 @@ def distance_class(hop: HopResult, graph: InfraGraph) -> str:
 def region_of(graph: InfraGraph, node_id: str) -> str | None:
     node = graph.nodes.get(node_id)
     return node.placement.region if node else None
+
+
+# Human names for the subtypes that pay a cold start (Normaliser.COLD_START). The
+# report used to say "Lambda" for every cold start; a Cloud Run one now says so.
+_COLD_START_SERVICE = {
+    "lambda": "Lambda", "cloud_run": "Cloud Run", "cloud_run_job": "Cloud Run",
+    "cloud_functions": "Cloud Functions", "cloud_functions_v2": "Cloud Functions", "app_engine": "App Engine",
+}
+
+
+def cold_start_service(graph: InfraGraph, node_ids) -> str:
+    """'Lambda', 'Cloud Run', or 'Cloud Run / Lambda' for a mixed set."""
+    names = {_COLD_START_SERVICE.get(graph.nodes[n].subtype, graph.nodes[n].subtype)
+             for n in node_ids if n in graph.nodes}
+    return " / ".join(sorted(names)) or "Lambda"
+
+
+def cold_start_fix(service: str) -> tuple[str, str]:
+    """(finding title stem, the remedy sentence) — Lambda's provisioned concurrency
+    has a different name on every other platform."""
+    if service == "Lambda":
+        return "provisioned concurrency", "provisioned concurrency (or a smaller package / SnapStart) removes it"
+    return "a minimum instance count", "a minimum instance count (min_instances) keeps a warm instance and removes it"

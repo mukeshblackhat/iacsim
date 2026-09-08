@@ -120,7 +120,7 @@ Inside, CloudFormation resources are made Terraform-shaped in one place
 the same `${address.attr}` placeholders) so the normaliser and every
 inference rule run unchanged on both formats.
 
-## GCP input — in progress (M11)
+## GCP input
 
 Point iacsim at a directory of `google_*` Terraform. There is no config file and no flag:
 the provider is auto-detected from the resource-type prefixes, and an explicit
@@ -136,13 +136,14 @@ types, so a `google-beta` block (and a resource that only exists in beta) is rea
 other. `.tf`, `.tofu` and `.tf.json`, modules, `for_each` / `count` and `templatefile()` all
 work exactly as they do for AWS: the parser layer was never AWS-specific.
 
-**Honest state:** M11 is in progress. What is missing is everything *after* the parse — the
-`google` normaliser and its type map, GCP inference rules (forwarding rule → URL map →
-backend service → NEG → Cloud Run, Eventarc, Pub/Sub push, Workflows, IAM via service
-accounts), GCP inter-region numbers, and the AWS-subtype behaviour tables becoming
-provider-owned. Until those land, a GCP directory parses but its graph is mostly placeholder
-`network` nodes with no region, so **do not trust the milliseconds yet**. Design notes and
-progress: `docs/gcp/`, `DECISIONS.md` §10, `TIMELINE.md`.
+**What it covers (M11):** the `gcp` normaliser (97 `google_*` types), the load-balancer
+chain drawn as its real resources (forwarding rule → proxy → URL map → backend service → NEG,
+priced as one device), Cloud Run / Functions cold starts, and five inference rules — the LB
+chain, IAM bindings via service accounts, Eventarc, Pub/Sub push, and Workflows YAML. Proven
+on seven unmodified public fixtures under `examples/real-world/gcp-*` and the controlled
+`examples/gcp-web` / `gcp-web-bad` pair (`iacsim diff` → +398 ms for a Cloud SQL one region
+away). Not yet: capacity modelling (`--walker load`) and `calibrate` for GCP. Design notes:
+`docs/gcp/`, `DECISIONS.md` §10, `TIMELINE.md`.
 
 ## Calibrate — replace guesses with measurements
 

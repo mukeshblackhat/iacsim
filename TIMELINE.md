@@ -508,11 +508,19 @@ the tables that decide these three answers have to belong to the provider, not t
 - **Existing docs updated**: `DECISIONS.md` §10 + the D8 amendment, `SPEC.md` §3 / §8 / §9,
   `CODE_FLOW.md` §5, `README.md` "GCP input", `CONTRIBUTING.md` "A cloud provider".
 
-### Next
+### Round 2 — implemented the same day (six commits, not pushed)
 
-Round 2 is implementation, sequenced in `docs/gcp/04-CHANGES.md`: loader provider fix →
-provider-owned subtype tables → the `gcp` normaliser → auto-detection → inference rules →
-latency numbers → examples and vendored fixtures.
+`docs/gcp/04-CHANGES.md` is the record; the short form: loader reads every provider
+block (WP1) → behaviour tables move onto each `Normaliser`, fixing a real AWS bug on
+the way (`aws_kinesis_stream` hops cost 0 ms) (WP2) → the `gcp` normaliser, its profile,
+and a zero-distance LB chain (WP3) → provider auto-detection and `--provider` (WP4) →
+five GCP inference rules (WP5) → seven public fixtures vendored unmodified (WP7a) →
+`gcp-web` / `gcp-web-bad`, fixture tests, four parser bugs the fixtures exposed (WP7b).
+
+Trust: `make check` 463 passed, 93.5 % coverage; every AWS example's `graph.json`
+and `report.json` **byte-identical** to the pre-M11 tree; an independent audit found
+two placement gaps (Firestore `location_id`, Spanner `config`), fixed with tests.
+Left open on purpose: GCP capacity modelling (G6), a Cloud Monitoring metric source.
 
 ## Milestones
 
@@ -536,7 +544,7 @@ Estimated: M1–M3 ≈ 1 week (demo-able), M0–M6 ≈ 2 weeks, M7 additive. Act
 |---|---|---|---|---|
 | M9 | Servers + Kubernetes | `generic` normaliser with `sites.yaml` / `distance.custom`; hcloud / DigitalOcean / Proxmox / vSphere / libvirt type maps; `remote-exec` as "provisioned on host" evidence; Kubernetes manifests / Helm-template adapter (Deployment env, Service→Deployment, Ingress/HTTPRoute, replicas/HPA → capacity) | ⏳ | |
 | M10 | Azure | `azurerm` normaliser + rules (private_endpoint, app_settings, role_assignment, APIM backend/policy, Logic App actions, Event Grid, backend pools, VNet peering/vWAN); region-pair defaults; ARM/Bicep parser; `azapi_resource` bodies; one example | ⏳ | |
-| M11 | GCP | `google` normaliser + rules (forwarding_rule→url_map→backend_service→NEG→Cloud Run, Eventarc, Pub/Sub push, Workflows YAML, IAM via service accounts, PSC); inter-region defaults; `.tofu` | 🔨 | |
+| M11 | GCP | `google` normaliser + rules (forwarding_rule→url_map→backend_service→NEG→Cloud Run, Eventarc, Pub/Sub push, Workflows YAML, IAM via service accounts, PSC); inter-region defaults; `.tofu` | ✅ | 2026-09-08 |
 | M12 | More IaC formats | Pulumi `stack export`, CDKTF `cdk.tf.json`, Config Connector KRM, OpenTofu extras | ⏳ | |
 | M13 | Servers without Terraform | Docker Compose, Ansible inventory + roles, Nomad, PaaS config files, Cloudflare Workers / Vercel | ⏳ | |
 | M14 | Live-account readers (the plug) | `INVENTORY_SOURCES` registry configured like `calibrate.sources`; AWS Config / Resource Explorer, Azure Resource Graph, GCP Cloud Asset Inventory; read-only; tested with a fake inventory | ⏳ | |

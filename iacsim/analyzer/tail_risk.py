@@ -14,7 +14,7 @@ additive), so every line is `additive=False`.
 
 from __future__ import annotations
 
-from iacsim.analyzer._common import counted_hops, distance_class
+from iacsim.analyzer._common import cold_start_service, counted_hops, distance_class
 from iacsim.core.interfaces import ANALYZERS, Analyzer
 from iacsim.core.models import Finding, HopResult, InfraGraph, Result
 
@@ -49,7 +49,8 @@ class TailRiskAnalyzer(Analyzer):
         p50, p99 = h.percentiles.get("p50", 0.0), h.percentiles.get("p99", 0.0)
         numbers = f"p50 {p50:,.1f} → p99 {p99:,.1f} ms"
         if h.breakdown.get("cold_start"):
-            return f"Lambda cold start — bimodal: usually warm, occasionally the full init cost ({numbers})"
+            service = cold_start_service(graph, [h.dst])
+            return f"{service} cold start — bimodal: usually warm, occasionally the full init cost ({numbers})"
         if distance_class(h, graph) == "cross_region":
             return f"cross-region network variance ({numbers})"
         return f"service-time variance ({numbers})"

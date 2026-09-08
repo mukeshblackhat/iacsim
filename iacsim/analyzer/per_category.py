@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 
-from iacsim.analyzer._common import LAYER_OF, counted_hops, distance_class, region_of
+from iacsim.analyzer._common import LAYER_OF, cold_start_service, counted_hops, distance_class, region_of
 from iacsim.core.interfaces import ANALYZERS, Analyzer
 from iacsim.core.models import Finding, InfraGraph, Result
 
@@ -95,7 +95,8 @@ class PerCategoryAnalyzer(Analyzer):
 
     def _cold_start_detail(self, hops) -> str:
         fns = {self.graph.display_name(h.dst) for h in hops}
-        return f"expected cold-start cost across {len(hops)} Lambda invocation(s) ({', '.join(sorted(fns))})"
+        service = cold_start_service(self.graph, [h.dst for h in hops])
+        return f"expected cold-start cost across {len(hops)} {service} invocation(s) ({', '.join(sorted(fns))})"
 
     def _subtype(self, node_id: str) -> str:
         node = self.graph.nodes.get(node_id)

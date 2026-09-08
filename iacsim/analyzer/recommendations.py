@@ -24,7 +24,7 @@ from __future__ import annotations
 from collections import defaultdict
 from itertools import groupby
 
-from iacsim.analyzer._common import counted_hops, distance_class, is_wait, region_of
+from iacsim.analyzer._common import cold_start_fix, cold_start_service, counted_hops, distance_class, is_wait, region_of
 from iacsim.core.interfaces import ANALYZERS, Analyzer
 from iacsim.core.models import Finding, HopResult, InfraGraph, NodeKind, Result
 
@@ -89,11 +89,13 @@ class RecommendationsAnalyzer(Analyzer):
             by_fn[h.dst] += h.breakdown["cold_start"]
         worst = sorted(by_fn.items(), key=lambda kv: -kv[1])[:3]
         names = ", ".join(self._name(n) for n, _ in worst)
+        service = cold_start_service(self.graph, [n for n, _ in by_fn.items()])
+        title, remedy = cold_start_fix(service)
         return [self._finding(
-            f"provisioned concurrency on {names}",
+            f"{title} on {names}",
             cold_ms,
             f"expected cold-start cost is {cold_ms / self.total:.0%} of the total across "
-            f"{len(cold)} Lambda invocation(s); provisioned concurrency (or a smaller package / SnapStart) removes it",
+            f"{len(cold)} {service} invocation(s); {remedy}",
             cold)]
 
     def _parallelise(self, hops: list[HopResult]) -> list[Finding]:

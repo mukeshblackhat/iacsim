@@ -271,3 +271,69 @@ than loose lower bounds so a type dropping out of `TYPE_MAP` fails there first.
 Verification: `pytest -q` → **463 passed**; coverage **94 %** (gate 85);
 `make examples` green including the six new lines; `ruff` clean;
 `tests/fixtures/foosh_report_sha256.txt` unmoved.
+
+---
+
+## Round 2 closed — final verification (2026-09-08)
+
+Six commits on `main` since `237de91`, none pushed (the user's instruction:
+commit, do not push):
+
+| commit | work package |
+|---|---|
+| `1cf53b4` | M11 docs — the plan, G1–G21, type map, testing checklist, corpus |
+| `7ba2bb2` | WP1 — loader reads every provider block, not only `aws` |
+| `22886a8` | WP2+WP3 — provider-owned tables, the `gcp` normaliser, profile, zero-distance chain |
+| `8dbb565` | WP4+WP5 — auto-detection, `--provider`, the five GCP rules |
+| `dda9a23` | WP7a — seven public fixtures vendored |
+| `c8f92d1` | WP7b — example pair, fixture tests, four parser bugs, audit fixes |
+
+**AWS is byte-identical.** The pre-M11 tree (`237de91`) was checked out into a
+throwaway worktree and every AWS example was run through both versions with the
+same `.venv`, `--region us-east-1`, `graph` then `run -o json`. After scrubbing
+absolute paths, `graph.json` and `report.json` were **identical for all ten**:
+`classic-web`, `classic-web-bad`, `order-queue`, `foosh-serverless`, `foosh-cfn`,
+and the five `real-world/` AWS fixtures. Stderr (the warnings) was identical
+too. The two deliberate AWS changes — the `kinesis` profile block and Firestore
+/ Spanner / Bigtable placement — touch no AWS example, which is why nothing
+moved; the guard-rail test is what proves `kinesis` is now priced.
+
+**GCP works on real code.** Seven unmodified public fixtures (three upstream
+repos, Apache-2.0, commits pinned) graph, run, and — where they have a public
+entry — infer a scenario. No node has `region=None`; no `google_*` type falls
+through to "unknown". The controlled pair `gcp-web` / `gcp-web-bad` gives the
+GCP diff story a known delta: **160 → 558 ms, +398 = 2 reads × 2 × (100 − 0.5)**,
+the chain contributing 0 ms on both sides.
+
+**Independent audit** (a reviewer agent, read-only) found two real placement
+gaps by code reading — Firestore `location_id` and Spanner `config` — both
+fixed in `c8f92d1` with a regression test; it confirmed the AWS/GCP `CHAIN`
+isolation, `INVOKE_KEYS` coverage, chain pricing at both ends, `detect_provider`
+edge cases and single-charged Pub/Sub delivery. It could not run the baseline
+diff (no shell); that was run by the lead, above.
+
+**Gate:** `make check` → ruff clean, **463 passed**, coverage **93.5 %**
+(85 % required); `make examples` green.
+
+### Left open, on purpose
+
+- GCP capacity modelling (`--walker load`) — G6; `simulator/capacity.py` and
+  `analyzer/saturation.py` are still AWS-only and return nothing for GCP nodes.
+- A Cloud Monitoring `MetricSource` so `iacsim calibrate` works on GCP.
+- `basename()` and other Terraform built-ins the evaluator lacks (named warning).
+- `allUsers` + `roles/run.invoker` does not draw an `internet` edge, so a public
+  Cloud Run with no load balancer infers no scenario (G13 open question).
+- 58 unticked boxes in `03-TESTING.md`, each annotated — mostly parser-level
+  unit tests that the fixture tests now cover end-to-end, and the CI matrix.
+
+### Closing fixes (2026-09-08)
+
+`iacsim run examples/gcp-web` described a Cloud Run cold start as "1 Lambda
+invocation(s)" and recommended "provisioned concurrency … SnapStart". Three
+analyzers (`per_category`, `recommendations`, `tail_risk`) hardcoded the word;
+`analyzer/_common.py` now names the service from the node's subtype
+(`cold_start_service`) and picks the remedy per platform (`cold_start_fix`:
+Lambda → provisioned concurrency, unchanged; anything else → a minimum instance
+count). Lambda wording is byte-identical, so `foosh_report_sha256.txt` is
+unmoved. `README.md` "GCP input" and `TIMELINE.md` M11 (🔨 → ✅) updated to the
+landed state.
