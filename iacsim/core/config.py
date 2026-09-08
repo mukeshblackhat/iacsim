@@ -16,7 +16,7 @@ import yaml
 from iacsim.core.util import deep_merge
 
 DEFAULTS: dict[str, Any] = {
-    "provider": "aws",
+    "provider": "auto",   # aws | gcp | auto = majority resource-type prefix (google_* → gcp), else aws (G1)
     "parsers": {
         "cloudformation": {"region": None},   # None → first region literal in the template → us-east-1
         "terraform": {"region": None, "workspace": None},   # --region fallback; terraform.workspace (default "default")
@@ -24,12 +24,17 @@ DEFAULTS: dict[str, Any] = {
     "inference": {
         "rules": [
             "step_functions",
+            "gcp_workflows",
             "event_source_mapping",
+            "gcp_eventarc",
+            "gcp_pubsub_push",
             "lambda_permission",
             "api_gateway_integration",
             "target_group",
+            "gcp_lb_chain",
             "env_var",
             "iam_policy",
+            "gcp_iam_binding",
             "vpc_peering",
         ],
     },

@@ -8,6 +8,7 @@ dump so old files stay readable after upgrades.
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -239,7 +240,8 @@ class InfraGraph:
 
     def display_name(self, node_id: str) -> str:
         """A node's label when no other node shares it, else a shortened id:
-        `module.compute.aws_instance.this["a"]` → `compute.instance["a"]`."""
+        `module.compute.aws_instance.this["a"]` → `compute.instance["a"]`,
+        `module.svc.google_cloud_run_v2_service.this` → `svc.cloud_run_v2_service`."""
         node = self.nodes.get(node_id)
         if self._label_counts is None or len(self._label_counts) == 0 and self.nodes:
             counts: dict[str, int] = {}
@@ -249,11 +251,22 @@ class InfraGraph:
             self._label_counts = counts
         if node and node.label and self._label_counts.get(node.label) == 1:
             return node.label
-        short = node_id.replace("module.", "").replace(".aws_", ".")
+        short = _TYPE_PREFIX.sub(".", node_id.replace("module.", ""))
         return short[:-5] if short.endswith(".this") else short.replace(".this[", "[")
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+# The provider prefix of a Terraform address's resource-type segment, whichever
+# cloud it is: `.aws_db_instance.this` → `.db_instance.this`,
+# `.google_cloud_run_v2_service.this` → `.cloud_run_v2_service.this`. Only the
+# first `_`-delimited word goes, and only from the segment directly before the
+# resource name — a module called `my_mod` or an index key like `["a_b"]` is
+# never touched. It must follow a dot: a root-level `aws_x.this` keeps its
+# prefix, exactly as before. A pattern rather than the normalisers' PREFIXES
+# because models.py sits below the registry and cannot import it.
+_TYPE_PREFIX = re.compile(r"\.[a-z][a-z0-9]*_(?=[a-z0-9_]+\.[^.\[]+(?:\[.*\])?$)")
 
 
 # ------------------------------------------------------------------ scenarios

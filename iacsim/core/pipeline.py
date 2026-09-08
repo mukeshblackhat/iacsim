@@ -32,6 +32,9 @@ from iacsim.core.models import (
 )
 from iacsim.parsers.detect import detect_parser
 
+AUTO_PROVIDER = "auto"       # DEFAULTS["provider"]: resolved here by detect_provider (G1)
+FALLBACK_PROVIDER = "aws"    # nothing voted (an empty or unrecognised directory), or a tie
+
 
 @dataclass
 class PipelineOutput:
@@ -42,14 +45,51 @@ class PipelineOutput:
     profile: Profile
 
 
+def detect_provider(raw: RawResources) -> tuple[str, str | None]:
+    """Which normaliser a directory is for, when `provider:` is not set (G1).
+
+    Every registered normaliser declares the resource-type prefixes it owns
+    (`Normaliser.PREFIXES`: `aws_` → aws, `google_` → gcp); each resource votes
+    for the normaliser whose prefix it carries and the majority wins. Types no
+    normaliser claims (`random_`, `tls_`, `azurerm_`…) do not vote; no votes at
+    all, or a tie, is aws. Returns the name and, for a mixed directory, a warning
+    saying what the minority loses: its resources go through the chosen
+    normaliser's unknown-type path (kept as network nodes, one warning each)
+    instead of becoming real nodes."""
+    prefixes = {name: NORMALISERS.get(name).PREFIXES for name in NORMALISERS.names()}
+    votes = dict.fromkeys(prefixes, 0)
+    for r in raw.resources:
+        for name, owned in prefixes.items():
+            if owned and r.type.startswith(owned):
+                votes[name] += 1
+    chosen = max(votes, key=lambda n: (votes[n], n == FALLBACK_PROVIDER), default=FALLBACK_PROVIDER)
+    if not votes.get(chosen):
+        return FALLBACK_PROVIDER, None
+    minority = {n: c for n, c in votes.items() if c and n != chosen}
+    if not minority:
+        return chosen, None
+    lost = "; ".join(f"{c} {_glob(prefixes[n])} resource(s)" for n, c in sorted(minority.items()))
+    return chosen, (f"mixed providers: normalised as {chosen} ({votes[chosen]} {_glob(prefixes[chosen])} resources); "
+                    f"{lost} left to the unknown-type path — set `provider:` in iacsim.yaml or pass --provider")
+
+
+def _glob(prefixes: tuple[str, ...]) -> str:
+    return "|".join(f"{p}*" for p in prefixes)
+
+
 def build_graph(target: Path, cfg: Config) -> tuple[InfraGraph, RawResources]:
     """Stages 1–3: parse → normalise → infer edges."""
     parser_cls = detect_parser(target, forced=cfg.get("format"))
     options = cfg.get(f"parsers.{parser_cls.registry_name}") or {}
     raw = parser_cls(**{k: v for k, v in options.items() if v is not None}).parse(target)
 
-    graph = NORMALISERS.get(cfg.get("provider"))().normalise(raw)
+    provider, mixed = cfg.get("provider"), None
+    if provider in (None, AUTO_PROVIDER):                # an explicit `provider:` / --provider wins
+        provider, mixed = detect_provider(raw)
+    graph = NORMALISERS.get(provider)().normalise(raw)
     graph.source_format = raw.format
+    if mixed:
+        graph.warnings.insert(0, mixed)                  # before the per-resource unknown-type warnings it explains
     graph.warnings.extend(raw.warnings)
 
     index: dict[tuple[str, str], Edge] = {}

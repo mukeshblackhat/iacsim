@@ -61,8 +61,8 @@ class StepFunctionsRule(InferenceRule):
         edges: list[Edge] = []
         for sm in graph.nodes_of_kind(NodeKind.ORCHESTRATOR):
             r = raws.get(sm.id)
-            if r is None:
-                continue
+            if r is None or r.type != "aws_sfn_state_machine":
+                continue                         # other clouds' orchestrators have their own rule (gcp_workflows)
             definition, source = _load_definition(r.attrs.get("definition"), graph)
             if definition is None:
                 graph.warnings.append(f"{sm.id}: state machine definition could not be read ({source})")

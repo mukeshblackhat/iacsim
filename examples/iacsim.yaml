@@ -1,7 +1,7 @@
 # Sample iacsim.yaml — every key is optional; this file IS the full default set
 # (tests/test_config_docs.py asserts it equals iacsim.core.config.DEFAULTS).
 # Copy next to your Terraform and edit. CLI flags override these.
-provider: aws
+provider: auto                  # aws | gcp | auto = majority resource-type prefix (google_* → gcp), else aws
 parsers:
   cloudformation:
     region: null                # CloudFormation has no provider block; null = guess from ARNs, else us-east-1
@@ -9,8 +9,9 @@ parsers:
     region: null                # fallback when a provider's region cannot be resolved (--region)
     workspace: null             # value of terraform.workspace; null = "default" (--workspace)
 inference:
-  rules: [step_functions, event_source_mapping, lambda_permission,
-          api_gateway_integration, target_group, env_var, iam_policy, vpc_peering]
+  rules: [step_functions, gcp_workflows, event_source_mapping, gcp_eventarc, gcp_pubsub_push,
+          lambda_permission, api_gateway_integration, target_group, gcp_lb_chain,
+          env_var, iam_policy, gcp_iam_binding, vpc_peering]
 scenarios:
   sources: [yaml_file, inferred_from_entrypoints]
 latency:

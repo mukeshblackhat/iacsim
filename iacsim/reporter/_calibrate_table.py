@@ -8,8 +8,8 @@ import io
 from rich.console import Console
 from rich.table import Table
 
-from iacsim.core.interfaces import MetricSource
 from iacsim.core.models import InfraGraph
+from iacsim.latency.calibrate.calibrator import measurable_kinds
 
 WIDTH = 110
 
@@ -37,6 +37,7 @@ def coverage_table(result, graph: InfraGraph) -> str:
             node = graph.nodes[node_id]
             skipped.add_row(node.label or node_id, node.subtype, reason)
         console.print(skipped)
-    measurable = sum(1 for n in graph.nodes.values() if n.subtype in MetricSource.KINDS)
+    targets = measurable_kinds()
+    measurable = sum(1 for n in graph.nodes.values() if n.subtype in targets)
     console.print(f"{measurable - len(result.covered)} of {measurable} measurable node(s) stay on defaults.yaml")
     return console.file.getvalue()

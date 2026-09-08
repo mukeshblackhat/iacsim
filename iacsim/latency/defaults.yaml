@@ -184,7 +184,7 @@ processing:
     defaults: { read: 0.5, write: 0.5 }
     per_resource: {}
   gcs:
-    defaults: { read: 20, write: 30 }
+    defaults: { read: 20, write: 30, consume: 500 }   # consume = Eventarc / notification delivery after an object finalises (estimate)
     per_resource: {}
   vertex_index:
     defaults: { read: 30 }                      # reached through vertex_index_endpoint in practice
@@ -214,9 +214,6 @@ processing:
     # The subscription is where delivery delay physically lives; topic → subscription
     # is a fan-out inside Pub/Sub (publish: 0), so delivery is charged once.
     defaults: { publish: 0, consume: 100 }
-    per_resource: {}
-  eventarc:
-    defaults: { publish: 10, consume: 250 }     # trigger delivery to its destination
     per_resource: {}
   eventarc_bus:
     defaults: { publish: 10, consume: 250 }

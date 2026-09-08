@@ -18,7 +18,7 @@ excluded from coverage for that reason.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, ClassVar
 
 from iacsim.core.interfaces import METRIC_SOURCES, MetricSource, MetricSourceError
 from iacsim.latency.calibrate import cloudwatch_queries as q
@@ -26,6 +26,11 @@ from iacsim.latency.calibrate import cloudwatch_queries as q
 
 @METRIC_SOURCES.register("cloudwatch")
 class CloudWatchMetricSource(MetricSource):
+    # The AWS calibration targets — the subtypes CloudWatch has a namespace for.
+    # `supports()` is the subset with queries written (cloudwatch_queries.SUPPORTED);
+    # step_functions is a target a fixture or another source fills until its exist.
+    KINDS: ClassVar[tuple[str, ...]] = ("lambda", "dynamodb", "rds", "alb", "api_gateway", "step_functions")
+
     def __init__(self, region: str | None = None, aws_profile: str | None = None,
                  **options: Any) -> None:
         super().__init__(region=region, aws_profile=aws_profile, **options)

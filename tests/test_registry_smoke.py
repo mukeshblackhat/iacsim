@@ -13,6 +13,7 @@ from iacsim.core.interfaces import (
     SCENARIO_SOURCES,
     WALKERS,
 )
+from iacsim.core.pipeline import AUTO_PROVIDER, FALLBACK_PROVIDER
 from iacsim.core.registry import BUILTIN_MODULES, load_builtin_plugins, walk_all_modules
 
 
@@ -21,7 +22,10 @@ def setup_module():
 
 
 def test_defaults_reference_registered_names():
-    assert DEFAULTS["provider"] in NORMALISERS
+    # "auto" is not a normaliser: the pipeline resolves it to one by resource-type
+    # prefix (G1). Any other value must be registered, and so must the fallback.
+    assert DEFAULTS["provider"] == AUTO_PROVIDER or DEFAULTS["provider"] in NORMALISERS
+    assert FALLBACK_PROVIDER in NORMALISERS
     for name in DEFAULTS["inference"]["rules"]:
         assert name in INFERENCE_RULES, name
     for name in DEFAULTS["scenarios"]["sources"]:

@@ -145,7 +145,7 @@ see "The 0 ms chain" below.
 |---|---|---|---|---|
 | `google_pubsub_topic` | QUEUE | `pubsub` | skills, docs:fn-pubsub | |
 | `google_pubsub_subscription` | QUEUE | `pubsub_subscription` | docs:fn-pubsub, corpus | `push_config.push_endpoint` is what `gcp_pubsub_push` reads |
-| `google_eventarc_trigger` | QUEUE | `eventarc` | docs:eventarc-adv, corpus | kept as a node, not collapsed: Eventarc delivery is real latency between source and destination |
+| `google_eventarc_trigger` | — (glue) | — | docs:eventarc-adv, corpus | **changed in WP5**: `gcp_eventarc` draws source → destination straight through the trigger, so a node here was an orphan with no edges. Delivery latency is charged on the *source*'s `consume` key (`pubsub`, `gcs`) instead |
 | `google_eventarc_message_bus` | QUEUE | `eventarc_bus` | docs:eventarc-adv | |
 | `google_eventarc_pipeline` | QUEUE | `eventarc_pipeline` | docs:eventarc-adv | |
 | `google_cloud_tasks_queue` | QUEUE | `cloud_tasks` | **unverified** | |

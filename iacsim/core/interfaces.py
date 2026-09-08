@@ -68,11 +68,18 @@ class Normaliser(ABC):
     *both* ends are chain subtypes costs no distance (`latency/rules/
     distance.py`); the hop into the chain and the hop out of it are priced
     normally.
+
+    `PREFIXES` names the resource-type prefixes this normaliser owns (`aws_`,
+    `google_`). With no `provider:` in iacsim.yaml the pipeline lets every
+    resource vote for the normaliser whose prefix it carries and picks the
+    majority (`core/pipeline.py: detect_provider`, decision G1); a normaliser
+    that declares none is never auto-detected, only chosen by name.
     """
 
     INVOKE_KEYS: ClassVar[dict[str, str]] = {}          # subtype → profile key charged on a call in
     COLD_START: ClassVar[frozenset[str]] = frozenset()  # subtypes that cold-start
     CHAIN: ClassVar[frozenset[str]] = frozenset()       # subtypes with no network between them
+    PREFIXES: ClassVar[tuple[str, ...]] = ()            # resource-type prefixes that vote for it (G1)
 
     @abstractmethod
     def normalise(self, raw: RawResources) -> InfraGraph: ...
@@ -154,13 +161,17 @@ class MetricSource(ABC):
     is one implementation; a Datadog or X-Ray source is a plugin implementing
     these two methods. `fake` is used in tests and dry runs.
 
-    `kind` is the node subtype (lambda, dynamodb, rds, alb, api_gateway,
-    step_functions); `name` is the node's physical name (`Node.label`).
-    `measure` returns the profile keys for that kind (see calibrator.py) or
-    None when the window holds no data — the calibrator then keeps defaults.
+    `KINDS` is the list of node subtypes a source knows how to name — the
+    calibration targets of one cloud (`cloudwatch.py` carries the AWS list;
+    a Cloud Monitoring source would carry GCP's). The calibrator walks the
+    union over every registered source and asks the chosen one `supports(kind)`
+    for each, so the engine never enumerates a cloud's subtypes itself (G21).
+    `name` is the node's physical name (`Node.label`). `measure` returns the
+    profile keys for that kind (see calibrator.py) or None when the window
+    holds no data — the calibrator then keeps defaults.
     """
 
-    KINDS = ("lambda", "dynamodb", "rds", "alb", "api_gateway", "step_functions")
+    KINDS: ClassVar[tuple[str, ...]] = ()               # subtypes this source can name; see calibrator.py
 
     def __init__(self, **options: Any) -> None:
         self.options = options

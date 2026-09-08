@@ -115,7 +115,6 @@ TYPE_MAP: dict[str, tuple[NodeKind, str]] = {
     # messaging and eventing
     "google_pubsub_topic":                          (NodeKind.QUEUE, "pubsub"),
     "google_pubsub_subscription":                   (NodeKind.QUEUE, "pubsub_subscription"),
-    "google_eventarc_trigger":                      (NodeKind.QUEUE, "eventarc"),
     "google_eventarc_message_bus":                  (NodeKind.QUEUE, "eventarc_bus"),
     "google_eventarc_pipeline":                     (NodeKind.QUEUE, "eventarc_pipeline"),
     "google_cloud_tasks_queue":                     (NodeKind.QUEUE, "cloud_tasks"),
@@ -165,6 +164,7 @@ IGNORED_PREFIXES = (
     "google_bigquery_routine", "google_bigquery_job", "google_bigquery_data_transfer_config",
     "google_bigtable_gc_policy", "google_vertex_ai_index_endpoint_deployed_index",
     "google_pubsub_schema", "google_eventarc_enrollment", "google_eventarc_google_api_source",
+    "google_eventarc_trigger",   # glue: gcp_eventarc draws source → destination straight through it
     # network glue: routing, peering config, VPNs, DNS, private services access
     "google_compute_router", "google_compute_route", "google_compute_network_peering_routes_config",
     "google_compute_shared_vpc_", "google_compute_project_", "google_compute_vpn_", "google_compute_ha_vpn_",
@@ -227,7 +227,7 @@ class GcpNormaliser(Normaliser):
         "cloud_sql": "read", "firestore": "read", "memorystore": "read", "gcs": "read",
         "vertex_index": "read", "spanner": "read", "bigquery": "read", "bigtable": "read",
         "memcache": "read", "filestore": "read", "alloydb": "read",
-        "pubsub": "publish", "pubsub_subscription": "publish", "eventarc": "publish",
+        "pubsub": "publish", "pubsub_subscription": "publish",
         "eventarc_bus": "publish", "eventarc_pipeline": "publish", "cloud_tasks": "publish",
         "workflows": "transition", "composer": "transition", "cloud_scheduler": "transition",
     }
@@ -237,6 +237,7 @@ class GcpNormaliser(Normaliser):
     })
     # The load-balancer chain: no wire between two of these, so no distance (G9).
     CHAIN: ClassVar[frozenset[str]] = CHAIN
+    PREFIXES: ClassVar[tuple[str, ...]] = ("google_",)   # what votes for this normaliser (G1)
 
     def normalise(self, raw: RawResources) -> InfraGraph:
         graph = InfraGraph()

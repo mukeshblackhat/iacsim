@@ -122,6 +122,7 @@ class AwsNormaliser(Normaliser):
     }
     # Subtypes that pay a cold start; their profile blocks carry `cold` / `cold_prob`.
     COLD_START: ClassVar[frozenset[str]] = frozenset({"lambda"})
+    PREFIXES: ClassVar[tuple[str, ...]] = ("aws_",)      # what votes for this normaliser (G1)
 
     def normalise(self, raw: RawResources) -> InfraGraph:
         graph = InfraGraph()

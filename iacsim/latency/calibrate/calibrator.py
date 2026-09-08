@@ -1,6 +1,6 @@
 """Graph + MetricSource → a calibration result in the defaults.yaml schema.
 
-For every node whose subtype is a MetricSource kind:
+For every node whose subtype some registered source can name (`measurable_kinds`):
   no physical name          → skipped "no physical name"
   source.supports() False   → skipped "source does not support <kind>"
   measure() is None         → skipped "no data in window"      (defaults kept)
@@ -25,7 +25,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from iacsim import __version__
-from iacsim.core.interfaces import MetricSource
+from iacsim.core.interfaces import METRIC_SOURCES, MetricSource
 from iacsim.core.models import InfraGraph, Node
 from iacsim.latency.profile import load_defaults_document
 
@@ -49,13 +49,24 @@ class CalibrationResult:
     filled: dict[str, list[str]] = field(default_factory=dict)           # node id → keys taken from defaults
 
 
+def measurable_kinds() -> frozenset[str]:
+    """Every subtype some registered metric source can name — the union of each
+    source's `KINDS` (CloudWatch's is the AWS list; a Cloud Monitoring source
+    adds GCP's). Nodes of these subtypes are the calibration targets: each is
+    reported as covered or skipped, and the chosen source's `supports(kind)`
+    decides which it can actually measure. A subtype no source lists (s3, ec2,
+    a VPC) is not a target at all and never appears in the coverage table."""
+    return frozenset(kind for name in METRIC_SOURCES.names() for kind in METRIC_SOURCES.get(name).KINDS)
+
+
 def calibrate(graph: InfraGraph, source: MetricSource, window: str, *, fmt: str) -> CalibrationResult:
     defaults = load_defaults_document()["processing"]
     result = CalibrationResult(profile={"meta": {}, "processing": {}})
     label_counts = Counter(n.label for n in graph.nodes.values() if n.label)
+    targets = measurable_kinds()
 
     for node in sorted(graph.nodes.values(), key=lambda n: n.id):
-        if node.subtype not in MetricSource.KINDS:
+        if node.subtype not in targets:
             continue
         reason = _skip_reason(node, source)
         if reason:

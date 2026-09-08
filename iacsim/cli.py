@@ -3,6 +3,7 @@
     iacsim run   ./infra [--profile p.yaml] [--walker monte_carlo --samples N --seed S]
                          [--walker load --load load.yaml]   users-until-it-breaks (M8)
                          [--scenario NAME ...] [--format terraform] [--all-hops]
+                         [--provider aws|gcp]   (default: auto-detected from resource types)
                          [-o text -o json -o markdown]
     iacsim graph ./infra                 dump graph.json only (M1 milestone check)
     iacsim diff  ./before ./after        compare two snapshots
@@ -170,6 +171,7 @@ def run(
     region: str = typer.Option(None, help="region fallback: CloudFormation templates, or Terraform "
                                           "providers whose region does not resolve"),
     workspace: str = typer.Option(None, help="value of terraform.workspace (default: default)"),
+    provider: str = typer.Option(None, help="normaliser: aws | gcp | auto = majority resource-type prefix (default)"),
 ) -> None:
     """Simulate every scenario and print the bottleneck report."""
     from iacsim.core import pipeline
@@ -179,7 +181,7 @@ def run(
         "simulation.walker": walker, "simulation.samples": samples, "simulation.seed": seed,
         "simulation.load": str(_resolve(target, load)) if load else None,
         "format": fmt, "parsers.cloudformation.region": region, "parsers.terraform.region": region,
-        "parsers.terraform.workspace": workspace,
+        "parsers.terraform.workspace": workspace, "provider": provider,
         "report.outputs": output or None,
     })
     if cfg.get("simulation.walker") == "load":
@@ -202,13 +204,14 @@ def graph(
     region: str = typer.Option(None, help="region fallback: CloudFormation templates, or Terraform "
                                           "providers whose region does not resolve"),
     workspace: str = typer.Option(None, help="value of terraform.workspace (default: default)"),
+    provider: str = typer.Option(None, help="normaliser: aws | gcp | auto = majority resource-type prefix (default)"),
 ) -> None:
     """Parse + normalise + infer edges; write graph.json. No simulation."""
     from iacsim.core import pipeline
     _bootstrap(target)
     cfg = load_config(_base_dir(target), {"format": fmt, "parsers.cloudformation.region": region,
                                           "parsers.terraform.region": region,
-                                          "parsers.terraform.workspace": workspace})
+                                          "parsers.terraform.workspace": workspace, "provider": provider})
     g, _ = pipeline.build_graph(target, cfg)
     out = _out_dir(target, cfg)
     write_graph(g, out)
@@ -229,13 +232,16 @@ def diff(
     fail_on_regression: str = typer.Option(None, "--fail-on-regression",
                                            help="exit 2 if any total grows more than e.g. 50ms or 10%"),
     output: list[str] = typer.Option(None, "--output", "-o", help="reporters: text | json | markdown (repeatable)"),
+    provider: str = typer.Option(None, help="normaliser for both sides: aws | gcp | auto = majority "
+                                            "resource-type prefix (default)"),
 ) -> None:
     """Run both snapshots with the same profile and report what changed:
     moved/added resources, per-category shift, changed hops, recommendations."""
     from iacsim.diff.differ import parse_threshold, run_diff, summarise
     _bootstrap(before)
     threshold = parse_threshold(fail_on_regression) if fail_on_regression else None
-    overrides = {"latency.profiles": _profiles(before, profile), "report.outputs": output or None}
+    overrides = {"latency.profiles": _profiles(before, profile), "report.outputs": output or None,
+                 "provider": provider}
     cfg_before, cfg_after = load_config(_base_dir(before), overrides), load_config(_base_dir(after), overrides)
     report, g_before, g_after = run_diff(before, cfg_before, after, cfg_after,
                                          scenario=scenario, align_by=align_by)
@@ -260,6 +266,7 @@ def validate(
     region: str = typer.Option(None, help="region fallback: CloudFormation templates, or Terraform "
                                           "providers whose region does not resolve"),
     workspace: str = typer.Option(None, help="value of terraform.workspace (default: default)"),
+    provider: str = typer.Option(None, help="normaliser: aws | gcp | auto = majority resource-type prefix (default)"),
 ) -> None:
     """Parse, normalise, and check scenarios.yaml — no simulation. Exit 1 when a
     scenario step names a node no edge touches (a typo, or a resource nothing is
@@ -268,7 +275,7 @@ def validate(
     _bootstrap(target)
     cfg = load_config(_base_dir(target), {"format": fmt, "parsers.cloudformation.region": region,
                                           "parsers.terraform.region": region,
-                                          "parsers.terraform.workspace": workspace})
+                                          "parsers.terraform.workspace": workspace, "provider": provider})
     g, _ = pipeline.build_graph(target, cfg)
     scenarios = pipeline.load_scenarios(g, target, cfg)
     profile = pipeline.load_profile(cfg)
@@ -307,13 +314,14 @@ def view(
     port: int = typer.Option(0, help="port to serve on (0 = pick a free one)"),
     no_open: bool = typer.Option(False, "--no-open", help="do not open a browser"),
     duration: float = typer.Option(None, help="serve for N seconds then stop (default: until Ctrl-C)"),
+    provider: str = typer.Option(None, help="normaliser: aws | gcp | auto = majority resource-type prefix (default)"),
 ) -> None:
     """Open the graph viewer: runs the pipeline if .iacsim/report.json is
     missing, then serves .iacsim/ over HTTP and opens the browser."""
     from iacsim.viewer import bind, prepare
     from iacsim.viewer import run as serve
     _bootstrap(target)
-    cfg = load_config(_base_dir(target), {"report.outputs": ["json"]})
+    cfg = load_config(_base_dir(target), {"report.outputs": ["json"], "provider": provider})
     out_dir = prepare(target, cfg)
     try:
         server, url = bind(out_dir, port=port)
